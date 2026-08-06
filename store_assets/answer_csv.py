@@ -106,10 +106,10 @@ PSL_DATA_USAGE_RESPONSES:PSL_PERFORMANCE_DIAGNOSTICS:DATA_USAGE_COLLECTION_PURPO
 PSL_DATA_USAGE_RESPONSES:PSL_PERFORMANCE_DIAGNOSTICS:DATA_USAGE_SHARING_PURPOSE,PSL_ANALYTICS,true,MULTIPLE_CHOICE,Data usage and handling (Diagnostics) / Why is this user data shared? Select all that apply. / Analytics
 """
 
-with open(r'C:\Users\LMS\AndroidStudioProjects\RetroMuse\store_assets\data_safety_answers.csv', 'w', newline='', encoding='utf-8') as f:
+with open(r'C:\Users\LMS\AndroidStudioProjects\RetroMuse\store_assets\data_safety_answers.csv', 'w', newline='', encoding='utf-8-sig') as f:
     f.write(csv_data.strip())
 
-with open(r'C:\RetroMuse\store_assets\data_safety_answers.csv', 'w', newline='', encoding='utf-8') as f:
+with open(r'C:\RetroMuse\store_assets\data_safety_answers.csv', 'w', newline='', encoding='utf-8-sig') as f:
     f.write(csv_data.strip())
 
 print("CSV updated successfully!")
