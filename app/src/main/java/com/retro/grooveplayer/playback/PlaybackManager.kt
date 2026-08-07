@@ -15,6 +15,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -110,7 +112,14 @@ object PlaybackManager {
         fxSpeed = speed
         fxBass = if (storageManager.getBassBoost()) 80 else 0
         
-        exoPlayer = ExoPlayer.Builder(context).build().apply {
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build()
+
+        exoPlayer = ExoPlayer.Builder(context)
+            .setAudioAttributes(audioAttributes, true)
+            .build().apply {
             volume = PlaybackManager.volume
             addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlayingChanged: Boolean) {

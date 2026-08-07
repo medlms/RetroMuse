@@ -80,6 +80,19 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
         }
     }
 
+    LaunchedEffect(Unit) {
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, permission) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            PlaybackManager.scanDeviceLibrary()
+        } else {
+            permissionLauncher.launch(permission)
+        }
+    }
+
     // Dynamic grouping
     val sortedSongs = remember(PlaybackManager.songs, sortBy, searchQuery) {
         val list = PlaybackManager.songs.toMutableList()
@@ -194,36 +207,7 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
                     )
                 }
 
-                // Scan & import buttons
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Button(
-                        onClick = { docPickerLauncher.launch("audio/*") },
-                        colors = ButtonDefaults.buttonColors(containerColor = BgCardColor),
-                        shape = RoundedCornerShape(99.dp),
-                        modifier = Modifier.weight(1f).height(38.dp)
-                    ) {
-                        Text("📁 Pick Files", color = TextPrimaryColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
 
-                    Button(
-                        onClick = {
-                            val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                Manifest.permission.READ_MEDIA_AUDIO
-                            } else {
-                                Manifest.permission.READ_EXTERNAL_STORAGE
-                            }
-                            permissionLauncher.launch(permission)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                        shape = RoundedCornerShape(99.dp),
-                        modifier = Modifier.weight(1f).height(38.dp)
-                    ) {
-                        Text("📡 Scan Storage", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
 
                 // Tabs row
                 ScrollableTabRow(
