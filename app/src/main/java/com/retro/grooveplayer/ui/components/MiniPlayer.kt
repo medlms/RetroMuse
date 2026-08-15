@@ -31,7 +31,7 @@ fun MiniPlayer(onMiniPlayerClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xE60C0C18)) // 90% opacity deep-dark bg
+            .background(BgModalColor.copy(alpha = 0.95f)) // Dynamic theme-relative background
             .clickable(onClick = onMiniPlayerClick)
     ) {
         // Top progress line
@@ -39,7 +39,7 @@ fun MiniPlayer(onMiniPlayerClick: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(2.dp)
-                .background(Color(0x15FFFFFF))
+                .background(BorderColor.copy(alpha = 0.5f))
         ) {
             Box(
                 modifier = Modifier

@@ -71,17 +71,15 @@ fun MainLayout() {
     val accentColorHex = PlaybackManager.accentColor
     val accentColor = Color(android.graphics.Color.parseColor(accentColorHex))
 
-    val items = listOf("Library", "Favourites", "Player", "Settings")
+    val items = listOf("Library", "Favourites", "Settings")
     val icons = mapOf(
         "Library" to "🏠",
         "Favourites" to "❤️",
-        "Player" to "▶️",
         "Settings" to "⚙️"
     )
     val labels = mapOf(
         "Library" to "Library",
         "Favourites" to "Favourites",
-        "Player" to "Now Playing",
         "Settings" to "Settings"
     )
 
@@ -108,47 +106,49 @@ fun MainLayout() {
                     )
                 }
 
-                NavigationBar(
-                    containerColor = BgModalColor,
-                    tonalElevation = 0.dp,
-                    modifier = Modifier.height(72.dp)
-                ) {
-                    items.forEach { screen ->
-                        val isSelected = currentRoute == screen
-                        val label = labels[screen] ?: screen
-                        val emoji = icons[screen] ?: "🎵"
+                if (currentRoute != "Player") {
+                    NavigationBar(
+                        containerColor = BgModalColor,
+                        tonalElevation = 0.dp,
+                        modifier = Modifier.height(80.dp)
+                    ) {
+                        items.forEach { screen ->
+                            val isSelected = currentRoute == screen
+                            val label = labels[screen] ?: screen
+                            val emoji = icons[screen] ?: "🎵"
 
-                        NavigationBarItem(
-                            selected = isSelected,
-                            alwaysShowLabel = true,
-                            onClick = {
-                                navController.navigate(screen) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
+                            NavigationBarItem(
+                                selected = isSelected,
+                                alwaysShowLabel = true,
+                                onClick = {
+                                    navController.navigate(screen) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
                                     }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            icon = {
-                                Text(
-                                    text = emoji,
-                                    fontSize = if (isSelected) 20.sp else 18.sp
+                                },
+                                icon = {
+                                    Text(
+                                        text = emoji,
+                                        fontSize = if (isSelected) 20.sp else 18.sp
+                                    )
+                                },
+                                label = {
+                                    Text(
+                                        text = label,
+                                        color = if (isSelected) accentColor else TextMutedColor,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        letterSpacing = 0.2.sp
+                                    )
+                                },
+                                colors = NavigationBarItemDefaults.colors(
+                                    indicatorColor = Color.Transparent
                                 )
-                            },
-                            label = {
-                                Text(
-                                    text = label,
-                                    color = if (isSelected) accentColor else TextMutedColor,
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    letterSpacing = 0.2.sp
-                                )
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                indicatorColor = Color.Transparent
                             )
-                        )
+                        }
                     }
                 }
             }
