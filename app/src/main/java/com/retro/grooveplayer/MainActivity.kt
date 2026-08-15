@@ -45,8 +45,16 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            val themeMode = PlaybackManager.themeMode
+            val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+            val isDark = when (themeMode) {
+                "light" -> false
+                "dark" -> true
+                else -> systemDark
+            }
+            PlaybackManager.isDarkTheme = isDark
+
             val accentColor = PlaybackManager.accentColor
-            
             GroovePlayerTheme(accentColorHex = accentColor) {
                 MainLayout()
             }

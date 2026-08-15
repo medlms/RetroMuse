@@ -63,6 +63,10 @@ object PlaybackManager {
     var recentlyPlayed by mutableStateOf<List<String>>(emptyList())
     var mostPlayed by mutableStateOf<Map<String, Int>>(emptyMap())
     
+    var minDuration by mutableStateOf(30)
+    var themeMode by mutableStateOf("system")
+    var isDarkTheme by mutableStateOf(false)
+
     var accentColor by mutableStateOf("#a855f7")
     var eqPreset by mutableStateOf("Flat")
 
@@ -119,6 +123,8 @@ object PlaybackManager {
         playlists = storageManager.getPlaylists()
         recentlyPlayed = storageManager.getRecentlyPlayed()
         mostPlayed = storageManager.getMostPlayed()
+        minDuration = storageManager.getMinDuration()
+        themeMode = storageManager.getThemeMode()
         songs = storageManager.getCachedSongs()
         accentColor = storageManager.getAccentColor()
         eqPreset = storageManager.getEqPreset()
@@ -826,6 +832,12 @@ object PlaybackManager {
                 val albumId = cursor.getLong(albumIdCol)
                 val duration = cursor.getLong(durCol)
                 val size = cursor.getLong(sizeCol)
+
+                // Filter out short files (whatsapp audio, ringtones)
+                if (duration < minDuration * 1000L) {
+                    continue
+                }
+
                 val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()
                 val albumArtUri = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId).toString()
                 
@@ -958,5 +970,16 @@ object PlaybackManager {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    fun changeMinDuration(seconds: Int) {
+        minDuration = seconds
+        storageManager.saveMinDuration(seconds)
+        scanDeviceLibrary() // Rescan immediately to apply filter
+    }
+
+    fun changeThemeMode(mode: String) {
+        themeMode = mode
+        storageManager.saveThemeMode(mode)
     }
 }

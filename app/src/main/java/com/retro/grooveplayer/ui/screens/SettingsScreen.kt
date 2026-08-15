@@ -185,6 +185,40 @@ fun SettingsScreen() {
         SectionTitle(title = "Interface", accentColor = accentColor)
 
         SettingRow(
+            icon = "🎨",
+            title = "Theme Mode",
+            subtitle = "Active: ${PlaybackManager.themeMode.uppercase()}",
+            rightContent = {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    listOf("light" to "☀️ Light", "dark" to "🌙 Dark", "system" to "📱 System").forEach { (mode, label) ->
+                        val isSelected = PlaybackManager.themeMode == mode
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(99.dp))
+                                .background(if (isSelected) accentColor else Color.Transparent)
+                                .border(1.dp, BorderColor, RoundedCornerShape(99.dp))
+                                .clickable {
+                                    PlaybackManager.changeThemeMode(mode)
+                                }
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) Color.White else TextSecondaryColor,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        )
+
+        SettingRow(
             icon = "✨",
             title = "Visualizer",
             subtitle = "Show audio bars while playing",
@@ -273,9 +307,63 @@ fun SettingsScreen() {
             }
         )
 
-        // Storage
-        SectionTitle(title = "Storage", accentColor = accentColor)
+        // Storage & Library
+        SectionTitle(title = "Storage & Library", accentColor = accentColor)
         
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    PlaybackManager.scanDeviceLibrary()
+                    Toast.makeText(context, "Scanning storage for audio files...", Toast.LENGTH_SHORT).show()
+                }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text("🔄", fontSize = 22.sp, modifier = Modifier.width(32.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Scan Media Library", color = TextPrimaryColor, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("Scan storage folders for newly added songs", color = TextSecondaryColor, fontSize = 12.sp)
+            }
+            Text("›", color = TextMutedColor, fontSize = 20.sp)
+        }
+
+        SettingRow(
+            icon = "⏳",
+            title = "Filter Short Tracks",
+            subtitle = "Hide voice notes/ringtones under ${PlaybackManager.minDuration}s",
+            rightContent = {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    listOf(0 to "0s", 10 to "10s", 30 to "30s", 60 to "1m", 120 to "2m").forEach { (sec, label) ->
+                        val isSelected = PlaybackManager.minDuration == sec
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(99.dp))
+                                .background(if (isSelected) accentColor else Color.Transparent)
+                                .border(1.dp, BorderColor, RoundedCornerShape(99.dp))
+                                .clickable {
+                                    PlaybackManager.changeMinDuration(sec)
+                                    Toast.makeText(context, "Library filtered by tracks > ${label}", Toast.LENGTH_SHORT).show()
+                                }
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) Color.White else TextSecondaryColor,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        )
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()

@@ -126,6 +126,22 @@ class StorageManager(context: Context) {
         prefs.edit().putString("most_played", gson.toJson(map)).apply()
     }
 
+    fun getMinDuration(): Int {
+        return prefs.getInt("min_duration", 30)
+    }
+
+    fun saveMinDuration(seconds: Int) {
+        prefs.edit().putInt("min_duration", seconds).apply()
+    }
+
+    fun getThemeMode(): String {
+        return prefs.getString("theme_mode", "system") ?: "system"
+    }
+
+    fun saveThemeMode(mode: String) {
+        prefs.edit().putString("theme_mode", mode).apply()
+    }
+
     fun clearAll() {
         prefs.edit().clear().apply()
     }
