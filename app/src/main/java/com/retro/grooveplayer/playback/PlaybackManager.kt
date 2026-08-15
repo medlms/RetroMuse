@@ -192,16 +192,34 @@ object PlaybackManager {
         if (sessionId <= 0) return
         try {
             equalizer?.release()
+            equalizer = null
             bassBoost?.release()
+            bassBoost = null
             virtualizer?.release()
+            virtualizer = null
             presetReverb?.release()
-
-            equalizer = Equalizer(0, sessionId).apply { enabled = true }
-            bassBoost = BassBoost(0, sessionId).apply { enabled = true }
-            virtualizer = Virtualizer(0, sessionId).apply { enabled = true }
-            presetReverb = PresetReverb(0, sessionId).apply { enabled = true }
+            presetReverb = null
 
             try {
+                equalizer = Equalizer(0, sessionId).apply { enabled = true }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            try {
+                bassBoost = BassBoost(0, sessionId).apply { enabled = true }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            try {
+                virtualizer = Virtualizer(0, sessionId).apply { enabled = true }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            try {
+                presetReverb = PresetReverb(0, sessionId).apply { enabled = true }
                 exoPlayer.setAuxEffectInfo(androidx.media3.common.AuxEffectInfo(presetReverb!!.id, 1.0f))
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -226,17 +244,17 @@ object PlaybackManager {
             eqPreset = "Custom"
             
             val eq = equalizer ?: return
-            val numBands = eq.numberOfBands.toInt()
-            val minLevel = eq.bandLevelRange[0]
-            val maxLevel = eq.bandLevelRange[1]
-            val mB = (db * 100).toInt().coerceIn(minLevel.toInt(), maxLevel.toInt())
+            try {
+                val numBands = eq.numberOfBands.toInt()
+                val minLevel = eq.bandLevelRange[0]
+                val maxLevel = eq.bandLevelRange[1]
+                val mB = (db * 100).toInt().coerceIn(minLevel.toInt(), maxLevel.toInt())
 
-            if (bandIndex < numBands) {
-                try {
+                if (bandIndex < numBands) {
                     eq.setBandLevel(bandIndex.toShort(), mB.toShort())
-                } catch (e: Exception) {
-                    e.printStackTrace()
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
     }
@@ -350,20 +368,20 @@ object PlaybackManager {
         val eq = equalizer ?: return
         val bands = EQ_PRESETS[preset] ?: EQ_PRESETS["Flat"] ?: return
         
-        val numBands = eq.numberOfBands.toInt()
-        val minLevel = eq.bandLevelRange[0]
-        val maxLevel = eq.bandLevelRange[1]
+        try {
+            val numBands = eq.numberOfBands.toInt()
+            val minLevel = eq.bandLevelRange[0]
+            val maxLevel = eq.bandLevelRange[1]
 
-        for (band in 0 until numBands) {
-            val centerFreq = eq.getCenterFreq(band.toShort()) / 1000 // In Hz
-            val closestIdx = findClosestBandIndex(centerFreq)
-            val db = bands.getOrElse(closestIdx) { 0 }
-            val mB = (db * 100).toInt().coerceIn(minLevel.toInt(), maxLevel.toInt())
-            try {
+            for (band in 0 until numBands) {
+                val centerFreq = eq.getCenterFreq(band.toShort()) / 1000 // In Hz
+                val closestIdx = findClosestBandIndex(centerFreq)
+                val db = bands.getOrElse(closestIdx) { 0 }
+                val mB = (db * 100).toInt().coerceIn(minLevel.toInt(), maxLevel.toInt())
                 eq.setBandLevel(band.toShort(), mB.toShort())
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -509,13 +527,17 @@ object PlaybackManager {
     }
 
     fun updatePlaybackParameters() {
-        val pitchFactor = 2.0.pow(fxPitch.toDouble() / 12.0).toFloat()
-        val rate = fxSpeed * pitchFactor
-        val clampedRate = rate.coerceIn(0.5f, 2.0f)
-        
-        // If pitch is 0, we can use pitch correction. Otherwise let pitch change naturally (which changes speed).
-        val params = PlaybackParameters(clampedRate, if (fxPitch == 0) 1.0f else pitchFactor)
-        exoPlayer.playbackParameters = params
+        try {
+            val pitchFactor = 2.0.pow(fxPitch.toDouble() / 12.0).toFloat()
+            val rate = fxSpeed * pitchFactor
+            val clampedRate = rate.coerceIn(0.5f, 2.0f)
+            
+            // If pitch is 0, we can use pitch correction. Otherwise let pitch change naturally (which changes speed).
+            val params = PlaybackParameters(clampedRate, if (fxPitch == 0) 1.0f else pitchFactor)
+            exoPlayer.playbackParameters = params
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     fun nextSong() {
