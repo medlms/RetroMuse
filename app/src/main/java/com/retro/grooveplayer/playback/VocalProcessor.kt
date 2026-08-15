@@ -2,7 +2,6 @@ package com.retro.grooveplayer.playback
 
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.AudioProcessor.AudioFormat
-import androidx.media3.common.audio.AudioProcessor.UnhandledAudioFormatException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -17,21 +16,22 @@ class VocalProcessor : AudioProcessor {
     private var buffer = ByteBuffer.allocate(0)
 
     override fun configure(inputAudioFormat: AudioFormat): AudioFormat {
+        // Safe check: we only support PCM 16-bit. If the input format is not PCM 16-bit,
+        // we return AudioFormat.NOT_SET so that we deactivate ourselves safely instead of throwing exceptions.
         if (inputAudioFormat.encoding != androidx.media3.common.C.ENCODING_PCM_16BIT) {
-            throw UnhandledAudioFormatException(inputAudioFormat)
+            pendingInputFormat = AudioFormat.NOT_SET
+            return AudioFormat.NOT_SET
         }
         pendingInputFormat = inputAudioFormat
         return inputAudioFormat
     }
 
     override fun isActive(): Boolean {
-        // Keep the processor always active to allow seamless, real-time live switching without clicks/reflushing
         return pendingInputFormat != AudioFormat.NOT_SET
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
         if (!inputBuffer.hasRemaining()) return
-        val limit = inputBuffer.limit()
         val remaining = inputBuffer.remaining()
         
         if (buffer.capacity() < remaining) {
@@ -41,22 +41,21 @@ class VocalProcessor : AudioProcessor {
         }
 
         // Process 16-bit PCM stereo sample by sample
-        if (inputFormat.channelCount == 2) {
-            while (inputBuffer.hasRemaining()) {
+        if (inputFormat != AudioFormat.NOT_SET && inputFormat.channelCount == 2) {
+            // Ensure we have at least 4 bytes (2 channels * 2 bytes/sample) to read a stereo frame
+            while (inputBuffer.remaining() >= 4) {
                 val left = inputBuffer.short
                 val right = inputBuffer.short
 
                 when (mode) {
                     Mode.ISOLATE_INSTRUMENTAL -> {
-                        // Out-Of-Phase Stereo (OOPS) / Center Channel Subtraction
-                        // Subtracting left and right removes centered vocals (monophonic parts), leaving instrumentals
+                        // Out-Of-Phase Stereo (OOPS): L - R cancels center vocals
                         val diff = ((left - right) / 2).toInt().coerceIn(-32768, 32767).toShort()
-                        buffer.putShort(diff) // Left channel output
-                        buffer.putShort(diff) // Right channel output
+                        buffer.putShort(diff)
+                        buffer.putShort(diff)
                     }
                     Mode.ISOLATE_VOCAL -> {
-                        // Center Channel Extraction
-                        // Taking the average (L + R) / 2 cancels side signals (reverb, stereo effects) and keeps center (vocals)
+                        // Mono sum extraction: (L + R) / 2 isolates centered vocals
                         val sum = ((left + right) / 2).toInt().coerceIn(-32768, 32767).toShort()
                         buffer.putShort(sum)
                         buffer.putShort(sum)
@@ -67,12 +66,15 @@ class VocalProcessor : AudioProcessor {
                     }
                 }
             }
+            // Put any leftover trailing bytes directly into the buffer to avoid underflow exceptions
+            if (inputBuffer.hasRemaining()) {
+                buffer.put(inputBuffer)
+            }
         } else {
-            // Mono track: pass through unchanged
+            // Mono track or unsupported layout: pass through unchanged
             buffer.put(inputBuffer)
         }
 
-        inputBuffer.limit(limit)
         buffer.flip()
         outputBuffer = buffer
     }

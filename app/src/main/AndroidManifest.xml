@@ -54,6 +54,21 @@
             android:name=".playback.TimerReceiver"
             android:enabled="true"
             android:exported="false" />
+
+        <!-- AppWidget Provider -->
+        <receiver
+            android:name=".widget.RetroMuseWidgetProvider"
+            android:exported="true"
+            android:label="RetroMuse Control Widget">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="ACTION_WIDGET_PLAY" />
+                <action android:name="ACTION_WIDGET_NEXT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info" />
+        </receiver>
         
     </application>
 </manifest>

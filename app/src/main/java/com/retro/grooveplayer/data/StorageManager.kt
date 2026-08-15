@@ -98,6 +98,34 @@ class StorageManager(context: Context) {
     fun getLockScreenEnabled(): Boolean = prefs.getBoolean("lock_screen_enabled", true)
     fun saveLockScreenEnabled(value: Boolean) = prefs.edit().putBoolean("lock_screen_enabled", value).apply()
 
+    fun getRecentlyPlayed(): List<String> {
+        val json = prefs.getString("recently_played", null) ?: return emptyList()
+        return try {
+            val type = object : TypeToken<List<String>>() {}.type
+            gson.fromJson(json, type)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveRecentlyPlayed(list: List<String>) {
+        prefs.edit().putString("recently_played", gson.toJson(list)).apply()
+    }
+
+    fun getMostPlayed(): Map<String, Int> {
+        val json = prefs.getString("most_played", null) ?: return emptyMap()
+        return try {
+            val type = object : TypeToken<Map<String, Int>>() {}.type
+            gson.fromJson(json, type)
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
+    fun saveMostPlayed(map: Map<String, Int>) {
+        prefs.edit().putString("most_played", gson.toJson(map)).apply()
+    }
+
     fun clearAll() {
         prefs.edit().clear().apply()
     }

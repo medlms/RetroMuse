@@ -409,10 +409,88 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(bottom = 120.dp)
                         ) {
+                            // 1. Recently Played
+                            val rpIds = PlaybackManager.recentlyPlayed
+                            val rpSongs = rpIds.mapNotNull { id -> PlaybackManager.songs.find { it.id == id } }
+                            
+                            // 2. Most Played
+                            val mpMap = PlaybackManager.mostPlayed
+                            val mpSongs = PlaybackManager.songs
+                                .filter { mpMap.containsKey(it.id) }
+                                .sortedByDescending { mpMap[it.id] ?: 0 }
+                            
+                            // 3. Recently Added
+                            val raSongs = PlaybackManager.songs
+                                .sortedByDescending { it.addedAt }
+                                .take(50)
+
+                            // Render Recently Played
+                            item {
+                                SmartPlaylistRow(
+                                    title = "Recently Played",
+                                    subtitle = "${rpSongs.size} tracks",
+                                    icon = "🕒",
+                                    color = RetroCyan,
+                                    onClick = {
+                                        if (rpSongs.isNotEmpty()) {
+                                            PlaybackManager.playSong(rpSongs[0], rpSongs)
+                                            onSongSelect()
+                                        } else {
+                                            Toast.makeText(context, "No tracks played recently.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                )
+                            }
+                            
+                            // Render Most Played
+                            item {
+                                SmartPlaylistRow(
+                                    title = "Most Played",
+                                    subtitle = "${mpSongs.size} tracks",
+                                    icon = "🔥",
+                                    color = RetroPink,
+                                    onClick = {
+                                        if (mpSongs.isNotEmpty()) {
+                                            PlaybackManager.playSong(mpSongs[0], mpSongs)
+                                            onSongSelect()
+                                        } else {
+                                            Toast.makeText(context, "Start playing music to build stats!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                )
+                            }
+                            
+                            // Render Recently Added
+                            item {
+                                SmartPlaylistRow(
+                                    title = "Recently Added",
+                                    subtitle = "${raSongs.size} tracks",
+                                    icon = "✨",
+                                    color = RetroGold,
+                                    onClick = {
+                                        if (raSongs.isNotEmpty()) {
+                                            PlaybackManager.playSong(raSongs[0], raSongs)
+                                            onSongSelect()
+                                        } else {
+                                            Toast.makeText(context, "No local tracks found.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                )
+                            }
+
+                            // Divider
+                            item {
+                                Divider(
+                                    color = BorderColor,
+                                    thickness = 1.dp,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                                )
+                            }
+
                             val pls = PlaybackManager.playlists
                             if (pls.isEmpty()) {
                                 item {
-                                    EmptyState("📋", "No playlists yet. Create one!")
+                                    EmptyState("📋", "No custom playlists yet. Create one!")
                                 }
                             } else {
                                 items(pls) { pl ->
@@ -757,5 +835,48 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
                 }
             }
         )
+    }
+}
+
+@Composable
+fun SmartPlaylistRow(
+    title: String,
+    subtitle: String,
+    icon: String,
+    color: Color,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(50.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(color.copy(alpha = 0.15f))
+                .border(1.dp, color.copy(alpha = 0.3f), RoundedCornerShape(12.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(icon, fontSize = 24.sp)
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = TextPrimaryColor,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = subtitle,
+                color = TextSecondaryColor,
+                fontSize = 12.sp
+            )
+        }
+        Text("›", color = TextMutedColor, fontSize = 24.sp)
     }
 }

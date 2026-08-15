@@ -59,6 +59,10 @@ object PlaybackManager {
     var favourites by mutableStateOf<List<String>>(emptyList())
     var playlists by mutableStateOf<List<Playlist>>(emptyList())
     
+    // Play History Tracking
+    var recentlyPlayed by mutableStateOf<List<String>>(emptyList())
+    var mostPlayed by mutableStateOf<Map<String, Int>>(emptyMap())
+    
     var accentColor by mutableStateOf("#a855f7")
     var eqPreset by mutableStateOf("Flat")
 
@@ -113,6 +117,8 @@ object PlaybackManager {
         // Load settings
         favourites = storageManager.getFavourites()
         playlists = storageManager.getPlaylists()
+        recentlyPlayed = storageManager.getRecentlyPlayed()
+        mostPlayed = storageManager.getMostPlayed()
         songs = storageManager.getCachedSongs()
         accentColor = storageManager.getAccentColor()
         eqPreset = storageManager.getEqPreset()
@@ -146,6 +152,7 @@ object PlaybackManager {
             addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlayingChanged: Boolean) {
                     PlaybackManager.isPlaying = isPlayingChanged
+                    PlaybackManager.updateWidgets()
                     if (isPlayingChanged) {
                         PlaybackManager.startProgressTracker()
                         try {
@@ -235,6 +242,20 @@ object PlaybackManager {
     fun updateSongMetadata(songId: String, newName: String, newArtist: String, newAlbum: String) {
         songs = songs.map { song ->
             if (song.id == songId) {
+                // Perform real MediaStore file tag update
+                try {
+                    val uri = Uri.parse(song.uri)
+                    if (uri.scheme == "content") {
+                        val values = android.content.ContentValues().apply {
+                            put(MediaStore.Audio.Media.TITLE, newName)
+                            put(MediaStore.Audio.Media.ARTIST, newArtist)
+                            put(MediaStore.Audio.Media.ALBUM, newAlbum)
+                        }
+                        context.contentResolver.update(uri, values, null, null)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
                 song.copy(name = newName, artist = newArtist, album = newAlbum)
             } else song
         }
@@ -244,9 +265,70 @@ object PlaybackManager {
         }
     }
 
+    private fun getFilePathFromUri(uriString: String): String? {
+        try {
+            val uri = Uri.parse(uriString)
+            if (uri.scheme == "content") {
+                val proj = arrayOf(MediaStore.Audio.Media.DATA)
+                context.contentResolver.query(uri, proj, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val colIdx = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
+                        return cursor.getString(colIdx)
+                    }
+                }
+            } else if (uri.scheme == "file") {
+                return uri.path
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return null
+    }
+
+    private fun parseLrcFile(file: File): List<com.retro.grooveplayer.data.LyricLine> {
+        val lines = mutableListOf<com.retro.grooveplayer.data.LyricLine>()
+        val timeRegex = Regex("\\[(\\d+):(\\d+)(?:\\.(\\d+))?\\]")
+        try {
+            file.forEachLine { line ->
+                val matches = timeRegex.findAll(line).toList()
+                if (matches.isNotEmpty()) {
+                    val text = line.substring(matches.last().range.last + 1).trim()
+                    for (match in matches) {
+                        val min = match.groupValues[1].toLongOrNull() ?: 0L
+                        val sec = match.groupValues[2].toLongOrNull() ?: 0L
+                        val msVal = match.groupValues[3]
+                        val ms = when {
+                            msVal.isEmpty() -> 0L
+                            msVal.length == 2 -> msVal.toLong() * 10L
+                            msVal.length >= 3 -> msVal.take(3).toLong()
+                            else -> msVal.toLong()
+                        }
+                        val timeMs = (min * 60 + sec) * 1000L + ms
+                        lines.add(com.retro.grooveplayer.data.LyricLine(timeMs, text))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return lines.sortedBy { it.timeMs }
+    }
+
     fun getLyricsForCurrentSong(): List<com.retro.grooveplayer.data.LyricLine> {
         val song = currentSong ?: return emptyList()
-        // Provide sample synchronized lyrics for demonstration/embedded tracks
+        val filePath = getFilePathFromUri(song.uri)
+        if (filePath != null) {
+            // Check for matching .lrc file next to the MP3
+            val lrcPath = filePath.replace(Regex("\\.[^/.]+$"), ".lrc")
+            val lrcFile = File(lrcPath)
+            if (lrcFile.exists()) {
+                val parsed = parseLrcFile(lrcFile)
+                if (parsed.isNotEmpty()) {
+                    return parsed
+                }
+            }
+        }
+        // Fallback to sample synchronized lyrics
         return listOf(
             com.retro.grooveplayer.data.LyricLine(0L, "♪ (${song.name} - ${song.artist}) ♪"),
             com.retro.grooveplayer.data.LyricLine(3000L, "Intro music playing..."),
@@ -386,6 +468,24 @@ object PlaybackManager {
         exoPlayer.play()
 
         buildQueue(songs, song.id)
+
+        // Log Play History
+        try {
+            val rp = recentlyPlayed.toMutableList()
+            rp.remove(song.id)
+            rp.add(0, song.id)
+            if (rp.size > 50) rp.removeAt(rp.size - 1)
+            recentlyPlayed = rp
+            storageManager.saveRecentlyPlayed(rp)
+
+            val mp = mostPlayed.toMutableMap()
+            mp[song.id] = (mp[song.id] ?: 0) + 1
+            mostPlayed = mp
+            storageManager.saveMostPlayed(mp)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        updateWidgets()
     }
 
     fun togglePlay() {
@@ -748,6 +848,7 @@ object PlaybackManager {
         isPlaying = false
         position = 0L
         stopProgressTracker()
+        updateWidgets()
     }
 
     fun importAudioUri(uri: Uri) {
@@ -818,5 +919,20 @@ object PlaybackManager {
     private fun stopProgressTracker() {
         progressJob?.cancel()
         progressJob = null
+    }
+
+    fun updateWidgets() {
+        try {
+            val intent = Intent(context, com.retro.grooveplayer.widget.RetroMuseWidgetProvider::class.java).apply {
+                action = android.appwidget.AppWidgetManager.ACTION_APPWIDGET_UPDATE
+            }
+            val ids = android.appwidget.AppWidgetManager.getInstance(context).getAppWidgetIds(
+                android.content.ComponentName(context, com.retro.grooveplayer.widget.RetroMuseWidgetProvider::class.java)
+            )
+            intent.putExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
+            context.sendBroadcast(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }
