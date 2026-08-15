@@ -50,7 +50,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF080810))
+                .background(BgColor)
                 .statusBarsPadding()
                 .padding(24.dp),
             verticalArrangement = Arrangement.Center,
@@ -117,7 +117,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF080810))
+            .background(BgColor)
     ) {
         // Gradient overlay
         Box(
@@ -125,7 +125,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(accentColor.copy(alpha = 0.22f), Color(0xFF080810), Color(0xFF080810))
+                        colors = listOf(accentColor.copy(alpha = 0.15f), BgColor, BgColor)
                     )
                 )
         )
@@ -133,7 +133,6 @@ fun PlayerScreen(onBackClick: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {

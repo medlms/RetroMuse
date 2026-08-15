@@ -145,7 +145,6 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
                         colors = listOf(Color(0xFF160D27), BgColor)
                     )
                 )
-                .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

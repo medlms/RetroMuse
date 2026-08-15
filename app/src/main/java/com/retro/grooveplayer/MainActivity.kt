@@ -79,7 +79,7 @@ fun MainLayout() {
 
     Scaffold(
         bottomBar = {
-            Column {
+            Column(modifier = Modifier.navigationBarsPadding()) {
                 // AdMob Banner Ad (when not on full Player screen)
                 if (currentRoute != "Player") {
                     com.retro.grooveplayer.ui.components.BannerAdView()

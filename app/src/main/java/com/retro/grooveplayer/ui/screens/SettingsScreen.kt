@@ -47,7 +47,6 @@ fun SettingsScreen() {
             .verticalScroll(rememberScrollState())
             .padding(bottom = 120.dp)
     ) {
-        // Header
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -56,7 +55,6 @@ fun SettingsScreen() {
                         colors = listOf(Color(0xFF160D27), BgColor)
                     )
                 )
-                .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 20.dp)
         ) {
             Column {

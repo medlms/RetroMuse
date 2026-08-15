@@ -38,7 +38,6 @@ fun FavouritesScreen(onSongSelect: () -> Unit) {
                         colors = listOf(Color(0xFF160D27), BgColor)
                     )
                 )
-                .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 20.dp)
         ) {
             Column {
