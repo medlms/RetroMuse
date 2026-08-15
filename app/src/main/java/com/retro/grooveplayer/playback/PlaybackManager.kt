@@ -141,6 +141,8 @@ object PlaybackManager {
             ): AudioSink? {
                 return DefaultAudioSink.Builder(context)
                     .setAudioProcessors(arrayOf(vocalProcessor))
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                     .build()
             }
         }

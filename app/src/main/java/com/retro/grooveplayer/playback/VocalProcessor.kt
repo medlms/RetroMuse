@@ -1,47 +1,32 @@
 package com.retro.grooveplayer.playback
 
-import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.AudioProcessor.AudioFormat
+import androidx.media3.common.audio.BaseAudioProcessor
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
-class VocalProcessor : AudioProcessor {
+class VocalProcessor : BaseAudioProcessor() {
     enum class Mode { OFF, ISOLATE_INSTRUMENTAL, ISOLATE_VOCAL }
 
     var mode = Mode.OFF
 
-    private var pendingInputFormat = AudioFormat.NOT_SET
-    private var inputFormat = AudioFormat.NOT_SET
-    private var outputBuffer = AudioProcessor.EMPTY_BUFFER
-    private var buffer = ByteBuffer.allocate(0)
-
-    override fun configure(inputAudioFormat: AudioFormat): AudioFormat {
-        // Safe check: we only support PCM 16-bit. If the input format is not PCM 16-bit,
-        // we return AudioFormat.NOT_SET so that we deactivate ourselves safely instead of throwing exceptions.
+    override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {
+        // We only support PCM 16-bit. If the input format is not PCM 16-bit,
+        // we return AudioFormat.NOT_SET to safely deactivate this processor.
         if (inputAudioFormat.encoding != androidx.media3.common.C.ENCODING_PCM_16BIT) {
-            pendingInputFormat = AudioFormat.NOT_SET
             return AudioFormat.NOT_SET
         }
-        pendingInputFormat = inputAudioFormat
         return inputAudioFormat
     }
 
-    override fun isActive(): Boolean {
-        return pendingInputFormat != AudioFormat.NOT_SET
-    }
-
     override fun queueInput(inputBuffer: ByteBuffer) {
-        if (!inputBuffer.hasRemaining()) return
         val remaining = inputBuffer.remaining()
-        
-        if (buffer.capacity() < remaining) {
-            buffer = ByteBuffer.allocate(remaining).order(ByteOrder.nativeOrder())
-        } else {
-            buffer.clear()
-        }
+        if (remaining == 0) return
+
+        // Obtain a formatted output buffer from BaseAudioProcessor
+        val outputBuffer = replaceOutputBuffer(remaining)
 
         // Process 16-bit PCM stereo sample by sample
-        if (inputFormat != AudioFormat.NOT_SET && inputFormat.channelCount == 2) {
+        if (inputAudioFormat.channelCount == 2) {
             // Ensure we have at least 4 bytes (2 channels * 2 bytes/sample) to read a stereo frame
             while (inputBuffer.remaining() >= 4) {
                 val left = inputBuffer.short
@@ -51,53 +36,30 @@ class VocalProcessor : AudioProcessor {
                     Mode.ISOLATE_INSTRUMENTAL -> {
                         // Out-Of-Phase Stereo (OOPS): L - R cancels center vocals
                         val diff = ((left - right) / 2).toInt().coerceIn(-32768, 32767).toShort()
-                        buffer.putShort(diff)
-                        buffer.putShort(diff)
+                        outputBuffer.putShort(diff)
+                        outputBuffer.putShort(diff)
                     }
                     Mode.ISOLATE_VOCAL -> {
                         // Mono sum extraction: (L + R) / 2 isolates centered vocals
                         val sum = ((left + right) / 2).toInt().coerceIn(-32768, 32767).toShort()
-                        buffer.putShort(sum)
-                        buffer.putShort(sum)
+                        outputBuffer.putShort(sum)
+                        outputBuffer.putShort(sum)
                     }
                     Mode.OFF -> {
-                        buffer.putShort(left)
-                        buffer.putShort(right)
+                        outputBuffer.putShort(left)
+                        outputBuffer.putShort(right)
                     }
                 }
             }
-            // Put any leftover trailing bytes directly into the buffer to avoid underflow exceptions
+            // Put any leftover trailing bytes directly to output to avoid frame fragmentation crashes
             if (inputBuffer.hasRemaining()) {
-                buffer.put(inputBuffer)
+                outputBuffer.put(inputBuffer)
             }
         } else {
-            // Mono track or unsupported layout: pass through unchanged
-            buffer.put(inputBuffer)
+            // Mono track: pass through unchanged
+            outputBuffer.put(inputBuffer)
         }
 
-        buffer.flip()
-        outputBuffer = buffer
-    }
-
-    override fun queueEndOfStream() {}
-
-    override fun getOutput(): ByteBuffer {
-        val output = outputBuffer
-        outputBuffer = AudioProcessor.EMPTY_BUFFER
-        return output
-    }
-
-    override fun isEnded(): Boolean = outputBuffer == AudioProcessor.EMPTY_BUFFER
-
-    override fun flush() {
-        outputBuffer = AudioProcessor.EMPTY_BUFFER
-        inputFormat = pendingInputFormat
-    }
-
-    override fun reset() {
-        flush()
-        buffer = ByteBuffer.allocate(0)
-        inputFormat = AudioFormat.NOT_SET
-        pendingInputFormat = AudioFormat.NOT_SET
+        outputBuffer.flip()
     }
 }
