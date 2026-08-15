@@ -15,8 +15,8 @@ import androidx.compose.ui.unit.sp
 import com.retro.grooveplayer.playback.PlaybackManager
 import com.retro.grooveplayer.ui.components.EmptyState
 import com.retro.grooveplayer.ui.components.SongItem
-import com.retro.grooveplayer.ui.theme.TextPrimaryColor
-import com.retro.grooveplayer.ui.theme.TextSecondaryColor
+import androidx.compose.ui.text.font.FontFamily
+import com.retro.grooveplayer.ui.theme.*
 
 @Composable
 fun FavouritesScreen(onSongSelect: () -> Unit) {
@@ -27,7 +27,7 @@ fun FavouritesScreen(onSongSelect: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF080810))
+            .background(BgColor)
     ) {
         // Header with gradient background
         Box(
@@ -35,7 +35,7 @@ fun FavouritesScreen(onSongSelect: () -> Unit) {
                 .fillMaxWidth()
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(Color(0xFF0A0A18), Color(0xFF080810))
+                        colors = listOf(Color(0xFF160D27), BgColor)
                     )
                 )
                 .statusBarsPadding()
@@ -43,16 +43,20 @@ fun FavouritesScreen(onSongSelect: () -> Unit) {
         ) {
             Column {
                 Text(
-                    text = "Favourites",
-                    color = TextPrimaryColor,
+                    text = "RETROMUSE",
+                    color = RetroPink,
+                    fontFamily = FontFamily.Monospace,
                     fontSize = 26.sp,
-                    fontWeight = FontWeight.ExtraBold
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.5.sp
                 )
-                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "${favSongs.size} songs",
-                    color = TextSecondaryColor,
-                    fontSize = 13.sp
+                    text = "Favourites Library • ${favSongs.size} songs",
+                    color = RetroCyan,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.5.sp
                 )
             }
         }

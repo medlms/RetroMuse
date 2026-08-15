@@ -17,6 +17,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -24,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.retro.grooveplayer.playback.PlaybackManager
 import com.retro.grooveplayer.playback.RepeatMode
+import com.retro.grooveplayer.playback.VocalProcessor
 import com.retro.grooveplayer.ui.components.BottomModal
 import com.retro.grooveplayer.ui.components.formatTime
 import com.retro.grooveplayer.ui.theme.*
@@ -42,6 +44,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
     var showEffects by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
+    var showVocalIsolatorModal by remember { mutableStateOf(false) }
 
     if (currentSong == null) {
         Column(
@@ -158,9 +161,11 @@ fun PlayerScreen(onBackClick: () -> Unit) {
             }
 
             // Artwork Disc
+            val discSize = if (isPlaying) 150.dp else 230.dp
+            val innerDiscSize = if (isPlaying) 130.dp else 200.dp
             Box(
                 modifier = Modifier
-                    .size(240.dp)
+                    .size(discSize)
                     .align(Alignment.CenterHorizontally)
                     .rotate(discRotation),
                 contentAlignment = Alignment.Center
@@ -168,7 +173,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 // Outer glow shadow Box
                 Box(
                     modifier = Modifier
-                        .size(210.dp)
+                        .size(innerDiscSize)
                         .clip(CircleShape)
                         .background(
                             Brush.sweepGradient(
@@ -181,7 +186,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                         artworkUri = currentSong.albumArtUri,
                         songColorHex = currentSong.color,
                         modifier = Modifier.fillMaxSize(),
-                        iconSizeSp = 64
+                        iconSizeSp = if (isPlaying) 44 else 64
                     )
                 }
             }
@@ -372,30 +377,93 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 Text("🔊", fontSize = 18.sp)
             }
 
-            // Extra buttons scroll
+            // Sound Editing dashboard
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Equalizer Card
+                    DashboardCard(
+                        icon = "🎛️",
+                        title = "Equalizer",
+                        subtitle = PlaybackManager.eqPreset,
+                        active = PlaybackManager.eqPreset != "Flat",
+                        accentColor = accentColor,
+                        modifier = Modifier.weight(1f),
+                        onClick = { showEQ = true }
+                    )
+                    // Audio FX Card
+                    DashboardCard(
+                        icon = "🌀",
+                        title = "Effects / Speed",
+                        subtitle = "${PlaybackManager.fxSpeed}x | Pitch ${if (PlaybackManager.fxPitch > 0) "+" else ""}${PlaybackManager.fxPitch}",
+                        active = PlaybackManager.fxSpeed != 1.0f || PlaybackManager.fxPitch != 0 || PlaybackManager.fxReverb > 0,
+                        accentColor = accentColor,
+                        modifier = Modifier.weight(1f),
+                        onClick = { showEffects = true }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Vocal Isolator Card
+                    val isolatorModeLabel = when (PlaybackManager.vocalProcessor.mode) {
+                        VocalProcessor.Mode.OFF -> "Off"
+                        VocalProcessor.Mode.ISOLATE_INSTRUMENTAL -> "Instrumental"
+                        VocalProcessor.Mode.ISOLATE_VOCAL -> "Vocals Only"
+                    }
+                    DashboardCard(
+                        icon = "🎙️",
+                        title = "Vocal Isolator",
+                        subtitle = isolatorModeLabel,
+                        active = PlaybackManager.vocalProcessor.mode != VocalProcessor.Mode.OFF,
+                        accentColor = accentColor,
+                        modifier = Modifier.weight(1f),
+                        onClick = { showVocalIsolatorModal = true }
+                    )
+                    // Timers Card
+                    val timerActive = PlaybackManager.sleepTimerEndTime != null || PlaybackManager.startTimerEndTime != null
+                    val timerLabel = if (PlaybackManager.sleepTimerEndTime != null) {
+                        "Sleep: ${PlaybackManager.sleepTimerCountdown}"
+                    } else if (PlaybackManager.startTimerEndTime != null) {
+                        "Start: ${PlaybackManager.startTimerCountdown}"
+                    } else "None Set"
+                    DashboardCard(
+                        icon = "⏱️",
+                        title = "Timers",
+                        subtitle = timerLabel,
+                        active = timerActive,
+                        accentColor = WarningColor,
+                        modifier = Modifier.weight(1f),
+                        onClick = { showTimer = true }
+                    )
+                }
+            }
+
+            // Quick Actions: Karaoke Lyrics & Queue
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                ExtraButton(label = "🎛️ EQ", onClick = { showEQ = true })
-                val timerActive = PlaybackManager.sleepTimerEndTime != null || PlaybackManager.startTimerEndTime != null
                 ExtraButton(
-                    label = if (PlaybackManager.sleepTimerEndTime != null) {
-                        "⏱ Sleep: ${PlaybackManager.sleepTimerCountdown}"
-                    } else if (PlaybackManager.startTimerEndTime != null) {
-                        "⏱ Start: ${PlaybackManager.startTimerCountdown}"
-                    } else "⏱ Timer",
-                    onClick = { showTimer = true },
-                    active = timerActive,
-                    activeColor = WarningColor
+                    label = "🎤 Karaoke Lyrics",
+                    modifier = Modifier.weight(1f),
+                    onClick = { showLyrics = true }
                 )
-                ExtraButton(label = "🎛️ Audio FX", onClick = { showEffects = true })
-                ExtraButton(label = "🎤 Lyrics", onClick = { showLyrics = true })
-                ExtraButton(label = "☰ Queue", onClick = { showQueue = true })
+                ExtraButton(
+                    label = "☰ Up Next Queue",
+                    modifier = Modifier.weight(1f),
+                    onClick = { showQueue = true }
+                )
             }
         }
     }
@@ -749,7 +817,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 }
             }
 
-            // Reverb (virtualizer)
+            // Reverb
             Column {
                 Text(
                     text = "🌊 Reverb/3D Space (${PlaybackManager.fxReverb}%)",
@@ -760,9 +828,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 Slider(
                     value = PlaybackManager.fxReverb.toFloat(),
                     onValueChange = {
-                        PlaybackManager.fxReverb = it.toInt()
-                        // Native Virtualizer scale
-                        PlaybackManager.applyVirtualizer(it > 10)
+                        PlaybackManager.applyReverb(it.toInt())
                     },
                     valueRange = 0f..100f,
                     colors = SliderDefaults.colors(thumbColor = accentColor, activeTrackColor = accentColor)
@@ -852,18 +918,122 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 }
             }
         }
+        // Vocal Isolator Bottom Sheet
+        BottomModal(visible = showVocalIsolatorModal, onDismissRequest = { showVocalIsolatorModal = false }, title = "Live Vocal Isolator 🎙️") {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Isolate singing or instrumentals live using real-time phase-cancellation DSP.",
+                    color = TextSecondaryColor,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val currentMode = PlaybackManager.vocalProcessor.mode
+                listOf(
+                    Triple(com.retro.grooveplayer.playback.VocalProcessor.Mode.OFF, "🎙️ Normal Mode", "Play standard audio without filtering"),
+                    Triple(com.retro.grooveplayer.playback.VocalProcessor.Mode.ISOLATE_INSTRUMENTAL, "🎸 Isolate Instrumentals", "Remove vocals using phase subtraction"),
+                    Triple(com.retro.grooveplayer.playback.VocalProcessor.Mode.ISOLATE_VOCAL, "🗣️ Isolate Vocals", "Extract center singing using mono sum")
+                ).forEach { (mode, title, desc) ->
+                    val isSelected = currentMode == mode
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isSelected) accentColor.copy(alpha = 0.15f) else BgCard2Color)
+                            .border(1.dp, if (isSelected) accentColor else BorderColor, RoundedCornerShape(10.dp))
+                            .clickable {
+                                PlaybackManager.vocalProcessor.mode = mode
+                                showVocalIsolatorModal = false
+                            }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = title, color = if (isSelected) accentColor else TextPrimaryColor, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text(text = desc, color = TextMutedColor, fontSize = 11.sp)
+                        }
+                        if (isSelected) {
+                            Text("✨", fontSize = 16.sp, color = accentColor)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DashboardCard(
+    icon: String,
+    title: String,
+    subtitle: String,
+    active: Boolean,
+    accentColor: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .height(68.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(BgCardColor.copy(alpha = 0.8f))
+            .border(
+                1.dp,
+                if (active) accentColor else BorderColor,
+                RoundedCornerShape(12.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(if (active) accentColor.copy(alpha = 0.15f) else Color(0x10FFFFFF)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(icon, fontSize = 18.sp)
+            }
+            Column(verticalArrangement = Arrangement.Center) {
+                Text(
+                    text = title,
+                    color = TextPrimaryColor,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = subtitle,
+                    color = if (active) accentColor else TextMutedColor,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }
 
 @Composable
 fun ExtraButton(
     label: String,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
     active: Boolean = false,
     activeColor: Color = Color(0xFFA855F7)
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(99.dp))
             .background(if (active) activeColor.copy(alpha = 0.15f) else BgCardColor)
             .border(

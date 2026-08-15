@@ -17,6 +17,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,7 +43,7 @@ fun SettingsScreen() {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF080810))
+            .background(BgColor)
             .verticalScroll(rememberScrollState())
             .padding(bottom = 120.dp)
     ) {
@@ -52,18 +53,30 @@ fun SettingsScreen() {
                 .fillMaxWidth()
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(Color(0xFF0A0A18), Color(0xFF080810))
+                        colors = listOf(Color(0xFF160D27), BgColor)
                     )
                 )
                 .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 20.dp)
         ) {
-            Text(
-                text = "Settings",
-                color = TextPrimaryColor,
-                fontSize = 26.sp,
-                fontWeight = FontWeight.ExtraBold
-            )
+            Column {
+                Text(
+                    text = "RETROMUSE",
+                    color = RetroPink,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.5.sp
+                )
+                Text(
+                    text = "System Configuration",
+                    color = RetroCyan,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.5.sp
+                )
+            }
         }
 
         // Section Playback

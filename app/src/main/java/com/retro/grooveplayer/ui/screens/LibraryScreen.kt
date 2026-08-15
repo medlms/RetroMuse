@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -133,7 +134,7 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF080810))
+            .background(BgColor)
     ) {
         // Header
         Box(
@@ -141,7 +142,7 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
                 .fillMaxWidth()
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(Color(0xFF0A0A18), Color(0xFF080810))
+                        colors = listOf(Color(0xFF160D27), BgColor)
                     )
                 )
                 .statusBarsPadding()
@@ -153,12 +154,24 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Library",
-                        color = TextPrimaryColor,
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
+                    Column {
+                        Text(
+                            text = "RETROMUSE",
+                            color = RetroPink,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 1.5.sp
+                        )
+                        Text(
+                            text = "Audio Workspace",
+                            color = RetroCyan,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         // Search trigger
                         IconButton(onClick = { showSearch = !showSearch }) {

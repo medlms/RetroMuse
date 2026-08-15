@@ -22,8 +22,7 @@ import com.retro.grooveplayer.ui.screens.FavouritesScreen
 import com.retro.grooveplayer.ui.screens.LibraryScreen
 import com.retro.grooveplayer.ui.screens.PlayerScreen
 import com.retro.grooveplayer.ui.screens.SettingsScreen
-import com.retro.grooveplayer.ui.theme.GroovePlayerTheme
-import com.retro.grooveplayer.ui.theme.TextMutedColor
+import com.retro.grooveplayer.ui.theme.*
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -102,7 +101,7 @@ fun MainLayout() {
                 }
 
                 NavigationBar(
-                    containerColor = Color(0xFA0A0A14),
+                    containerColor = BgModalColor,
                     tonalElevation = 0.dp,
                     modifier = Modifier.height(72.dp)
                 ) {

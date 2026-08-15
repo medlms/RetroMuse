@@ -9,8 +9,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     
-    <!-- For post notifications on Android 13+ (useful for player notification controls) -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Alarm & WakeLock permissions for locked-screen autostart timer -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:allowBackup="true"
@@ -47,6 +48,12 @@
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
+        
+        <!-- BroadcastReceiver forlocked-screen autostart timer -->
+        <receiver
+            android:name=".playback.TimerReceiver"
+            android:enabled="true"
+            android:exported="false" />
         
     </application>
 </manifest>

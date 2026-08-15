@@ -1,5 +1,7 @@
 package com.retro.grooveplayer.playback
 
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
@@ -7,6 +9,7 @@ import android.database.Cursor
 import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
+import android.media.audiofx.PresetReverb
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -21,6 +24,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import com.retro.grooveplayer.data.Playlist
 import com.retro.grooveplayer.data.Song
 import com.retro.grooveplayer.data.StorageManager
@@ -33,6 +39,7 @@ enum class RepeatMode { NONE, ALL, ONE }
 
 object PlaybackManager {
     lateinit var exoPlayer: ExoPlayer
+    lateinit var vocalProcessor: VocalProcessor
     private lateinit var storageManager: StorageManager
     private lateinit var context: Context
 
@@ -78,6 +85,7 @@ object PlaybackManager {
     private var equalizer: Equalizer? = null
     private var bassBoost: BassBoost? = null
     private var virtualizer: Virtualizer? = null
+    private var presetReverb: PresetReverb? = null
     private var currentSessionId: Int = -1
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -112,12 +120,26 @@ object PlaybackManager {
         fxSpeed = speed
         fxBass = if (storageManager.getBassBoost()) 80 else 0
         
+        vocalProcessor = VocalProcessor()
+
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
-        exoPlayer = ExoPlayer.Builder(context)
+        val renderersFactory = object : DefaultRenderersFactory(context) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean
+            ): AudioSink? {
+                return DefaultAudioSink.Builder(context)
+                    .setAudioProcessors(arrayOf(vocalProcessor))
+                    .build()
+            }
+        }
+
+        exoPlayer = ExoPlayer.Builder(context, renderersFactory)
             .setAudioAttributes(audioAttributes, true)
             .build().apply {
             volume = PlaybackManager.volume
@@ -163,14 +185,23 @@ object PlaybackManager {
             equalizer?.release()
             bassBoost?.release()
             virtualizer?.release()
+            presetReverb?.release()
 
             equalizer = Equalizer(0, sessionId).apply { enabled = true }
             bassBoost = BassBoost(0, sessionId).apply { enabled = true }
             virtualizer = Virtualizer(0, sessionId).apply { enabled = true }
+            presetReverb = PresetReverb(0, sessionId).apply { enabled = true }
+
+            try {
+                exoPlayer.setAuxEffectInfo(androidx.media3.common.AuxEffectInfo(presetReverb!!.id, 1.0f))
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
 
             applyEqPreset(eqPreset)
             applyBassBoost(fxBass)
             applyVirtualizer(storageManager.getSurround())
+            applyReverb(fxReverb)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -292,6 +323,35 @@ object PlaybackManager {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    fun applyReverb(percent: Int) {
+        fxReverb = percent
+        val reverb = presetReverb ?: return
+        try {
+            val preset = when {
+                percent == 0 -> PresetReverb.PRESET_NONE
+                percent <= 15 -> PresetReverb.PRESET_SMALLROOM
+                percent <= 35 -> PresetReverb.PRESET_MEDIUMROOM
+                percent <= 55 -> PresetReverb.PRESET_LARGEROOM
+                percent <= 75 -> PresetReverb.PRESET_MEDIUMHALL
+                percent <= 90 -> PresetReverb.PRESET_LARGEHALL
+                else -> PresetReverb.PRESET_PLATE
+            }
+            reverb.preset = preset
+            reverb.enabled = (preset != PresetReverb.PRESET_NONE)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun playFirstSong() {
+        coroutineScope.launch {
+            if (songs.isNotEmpty()) {
+                val songToPlay = currentSong ?: songs[0]
+                playSong(songToPlay, songs)
+            }
         }
     }
 
@@ -535,13 +595,40 @@ object PlaybackManager {
         startTimerEndTime = System.currentTimeMillis() + durationMs
         startTimerLabel = "$minutes min"
 
+        // Schedule exact alarm to trigger even when locked/asleep
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(context, TimerReceiver::class.java)
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            1001,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val triggerTime = System.currentTimeMillis() + durationMs
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerTime,
+                    pendingIntent
+                )
+            } else {
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerTime,
+                    pendingIntent
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         startTimerJob = coroutineScope.launch {
             while (true) {
                 val remaining = (startTimerEndTime ?: 0L) - System.currentTimeMillis()
                 if (remaining <= 0) {
-                    if (songs.isNotEmpty()) {
-                        playSong(songs[0], songs)
-                    }
+                    // Handled by AlarmManager broadcast receiver
                     clearStartTimer()
                     break
                 }
@@ -559,6 +646,20 @@ object PlaybackManager {
         startTimerEndTime = null
         startTimerLabel = ""
         startTimerCountdown = ""
+
+        try {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(context, TimerReceiver::class.java)
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                1001,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.cancel(pendingIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     // Media Scanning & File Picker Utils
