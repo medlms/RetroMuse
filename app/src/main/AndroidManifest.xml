@@ -4,16 +4,26 @@
     <!-- Audio permissions -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- Needed only on API 28 and below to save exported renders; scoped storage
+         handles it from API 29 onward. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
     
     <!-- Foreground Service permissions for background playback -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- Required so the media playback notification can be posted. Without it the
+         foreground service can never call startForeground() and the process is killed. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
     <!-- Alarm & WakeLock permissions for locked-screen autostart timer -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
+        android:name=".RetroMuseApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -24,7 +34,7 @@
         <!-- Google AdMob Application ID -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713"/>
+            android:value="${admobAppId}"/>
         
         <activity
             android:name=".MainActivity"
@@ -64,6 +74,7 @@
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="ACTION_WIDGET_PLAY" />
                 <action android:name="ACTION_WIDGET_NEXT" />
+                <action android:name="ACTION_WIDGET_PREV" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"

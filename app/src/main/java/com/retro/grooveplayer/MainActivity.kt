@@ -3,11 +3,20 @@ package com.retro.grooveplayer
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.LibraryMusic
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -44,6 +53,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        maybeAskForReview()
+
         setContent {
             val themeMode = PlaybackManager.themeMode
             val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
@@ -60,6 +71,26 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    /**
+     * Asks for a Play rating only once the user has actually got value from the app -
+     * several sessions and several tracks played. Prompting on first launch is the
+     * fastest way to collect one-star reviews.
+     */
+    private fun maybeAskForReview() {
+        if (!PlaybackManager.shouldAskForReview()) return
+        try {
+            val manager = com.google.android.play.core.review.ReviewManagerFactory.create(this)
+            manager.requestReviewFlow().addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    manager.launchReviewFlow(this, task.result)
+                    PlaybackManager.markReviewRequested()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 }
 
 @Composable
@@ -72,22 +103,23 @@ fun MainLayout() {
     val accentColor = Color(android.graphics.Color.parseColor(accentColorHex))
 
     val items = listOf("Library", "Favourites", "Settings")
-    val icons = mapOf(
-        "Library" to "🏠",
-        "Favourites" to "❤️",
-        "Settings" to "⚙️"
+    val selectedIcons = mapOf(
+        "Library" to Icons.Filled.LibraryMusic,
+        "Favourites" to Icons.Filled.Favorite,
+        "Settings" to Icons.Filled.Settings
     )
-    val labels = mapOf(
-        "Library" to "Library",
-        "Favourites" to "Favourites",
-        "Settings" to "Settings"
+    val unselectedIcons = mapOf(
+        "Library" to Icons.Outlined.LibraryMusic,
+        "Favourites" to Icons.Outlined.FavoriteBorder,
+        "Settings" to Icons.Outlined.Settings
     )
 
     Scaffold(
         bottomBar = {
             Column(modifier = Modifier.navigationBarsPadding()) {
-                // AdMob Banner Ad (when not on full Player screen)
-                if (currentRoute != "Player") {
+                // Ads are held back for the first couple of sessions - a banner before
+                // the user has played anything hurts retention, which feeds ranking.
+                if (currentRoute != "Player" && PlaybackManager.shouldShowAds) {
                     com.retro.grooveplayer.ui.components.BannerAdView()
                 }
 
@@ -107,15 +139,16 @@ fun MainLayout() {
                 }
 
                 if (currentRoute != "Player") {
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BorderColor))
                     NavigationBar(
-                        containerColor = BgModalColor,
+                        containerColor = BgElevatedColor,
                         tonalElevation = 0.dp,
-                        modifier = Modifier.height(80.dp)
+                        modifier = Modifier.height(74.dp)
                     ) {
                         items.forEach { screen ->
                             val isSelected = currentRoute == screen
-                            val label = labels[screen] ?: screen
-                            val emoji = icons[screen] ?: "🎵"
+                            val icon = (if (isSelected) selectedIcons[screen] else unselectedIcons[screen])
+                                ?: Icons.Outlined.LibraryMusic
 
                             NavigationBarItem(
                                 selected = isSelected,
@@ -130,22 +163,29 @@ fun MainLayout() {
                                     }
                                 },
                                 icon = {
-                                    Text(
-                                        text = emoji,
-                                        fontSize = if (isSelected) 20.sp else 18.sp
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = screen,
+                                        modifier = Modifier.size(23.dp)
                                     )
                                 },
                                 label = {
                                     Text(
-                                        text = label,
-                                        color = if (isSelected) accentColor else TextMutedColor,
+                                        text = screen,
                                         fontSize = 11.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        letterSpacing = 0.2.sp
+                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                        letterSpacing = 0.sp
                                     )
                                 },
                                 colors = NavigationBarItemDefaults.colors(
-                                    indicatorColor = Color.Transparent
+                                    selectedIconColor = accentColor,
+                                    selectedTextColor = accentColor,
+                                    unselectedIconColor = TextMutedColor,
+                                    unselectedTextColor = TextMutedColor,
+                                    // Composited to an opaque tint so the pill never
+                                    // renders solid and hides the icon inside it.
+                                    indicatorColor = accentColor.copy(alpha = 0.13f)
+                                        .compositeOver(BgElevatedColor)
                                 )
                             )
                         }

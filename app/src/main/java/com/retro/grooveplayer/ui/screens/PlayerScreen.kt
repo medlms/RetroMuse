@@ -9,7 +9,22 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.VolumeMute
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.*
+import androidx.compose.ui.draw.shadow
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,7 +44,34 @@ import com.retro.grooveplayer.playback.VocalProcessor
 import com.retro.grooveplayer.ui.components.BottomModal
 import com.retro.grooveplayer.ui.components.formatTime
 import com.retro.grooveplayer.ui.theme.*
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
+
+/** Hands the rendered file to the system share sheet. */
+private fun shareAudio(
+    context: android.content.Context,
+    uri: android.net.Uri,
+    songName: String,
+    presetLabel: String
+) {
+    try {
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "audio/*"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            putExtra(android.content.Intent.EXTRA_TITLE, "$songName ($presetLabel)")
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "Share audio"))
+    } catch (e: Exception) {
+        e.printStackTrace()
+        android.widget.Toast.makeText(
+            context,
+            "Saved to Music/RetroMuse, but sharing isn't available.",
+            android.widget.Toast.LENGTH_LONG
+        ).show()
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +87,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
     var showQueue by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
     var showVocalIsolatorModal by remember { mutableStateOf(false) }
+    var showPresets by remember { mutableStateOf(false) }
 
     if (currentSong == null) {
         Column(
@@ -88,29 +131,32 @@ fun PlayerScreen(onBackClick: () -> Unit) {
     val progress = if (duration > 0) position.toFloat() / duration else 0f
     val isFav = PlaybackManager.favourites.contains(currentSong.id)
 
-    // Disc rotation animation
-    val infiniteTransition = rememberInfiniteTransition(label = "disc")
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), androidx.compose.animation.core.RepeatMode.Restart), label = "rotation"
-    )
-    val discRotation = if (isPlaying) rotation else 0f
-
-    // Visualizer randomized heights
-    val vizHeights = remember { mutableStateListOf<Float>().apply { addAll(List(28) { 4f }) } }
+    // Bars driven by the real output spectrum (see AudioLevels), not random numbers.
+    val barCount = com.retro.grooveplayer.playback.AudioLevels.BAR_COUNT
+    val vizHeights = remember { mutableStateListOf<Float>().apply { addAll(List(barCount) { 3f }) } }
     LaunchedEffect(isPlaying) {
         if (isPlaying) {
+            com.retro.grooveplayer.playback.AudioLevels.start()
             while (true) {
-                for (i in 0 until 28) {
-                    vizHeights[i] = 4f + Random.nextFloat() * 28f
+                for (i in 0 until barCount) {
+                    vizHeights[i] = 3f + com.retro.grooveplayer.playback.AudioLevels.bars[i] * 32f
                 }
-                kotlinx.coroutines.delay(100)
+                kotlinx.coroutines.delay(50)
             }
         } else {
-            for (i in 0 until 28) {
-                vizHeights[i] = 4f
+            com.retro.grooveplayer.playback.AudioLevels.stop()
+            for (i in 0 until barCount) {
+                vizHeights[i] = 3f
             }
+        }
+    }
+
+    // Surface a failed track once, then clear it.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(PlaybackManager.playbackError) {
+        PlaybackManager.playbackError?.let { message ->
+            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+            PlaybackManager.playbackError = null
         }
     }
 
@@ -130,11 +176,14 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 )
         )
 
+        // Scrollable so the controls stay reachable in landscape and on short screens,
+        // where the fixed column used to clip the dashboard off the bottom.
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // Header
             Row(
@@ -145,103 +194,106 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onBackClick) {
-                    Text("‹", color = TextPrimaryColor, fontSize = 32.sp)
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown,
+                        contentDescription = "Back",
+                        tint = TextPrimaryColor,
+                        modifier = Modifier.size(28.dp)
+                    )
                 }
                 Text(
                     text = "NOW PLAYING",
-                    color = TextSecondaryColor,
+                    color = TextMutedColor,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.5.sp
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.4.sp
                 )
                 IconButton(onClick = { showQueue = true }) {
-                    Text("☰", color = TextPrimaryColor, fontSize = 20.sp)
+                    Icon(
+                        Icons.Filled.QueueMusic,
+                        contentDescription = "Queue",
+                        tint = TextPrimaryColor,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
             }
 
-            // Artwork Disc
-            val discSize = if (isPlaying) 150.dp else 230.dp
-            val innerDiscSize = if (isPlaying) 130.dp else 200.dp
-            Box(
+            // Compact now-playing header. The large rotating disc used to occupy the
+            // top third of the screen; the editing controls need that room more.
+            Row(
                 modifier = Modifier
-                    .size(discSize)
-                    .align(Alignment.CenterHorizontally)
-                    .rotate(discRotation),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Outer glow shadow Box
                 Box(
                     modifier = Modifier
-                        .size(innerDiscSize)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.sweepGradient(
-                                colors = listOf(accentColor, accentColor.copy(alpha = 0.3f), accentColor)
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
+                        .size(64.dp)
+                        .shadow(
+                            elevation = if (PlaybackManager.isDarkTheme) 0.dp else 8.dp,
+                            shape = RoundedCornerShape(16.dp),
+                            ambientColor = accentColor.copy(alpha = 0.25f),
+                            spotColor = accentColor.copy(alpha = 0.3f)
+                        )
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(BgCard2Color)
                 ) {
                     com.retro.grooveplayer.ui.components.ArtworkImage(
                         artworkUri = currentSong.albumArtUri,
                         songColorHex = currentSong.color,
                         modifier = Modifier.fillMaxSize(),
-                        iconSizeSp = if (isPlaying) 44 else 64
+                        iconSizeSp = 24
                     )
                 }
-            }
-
-            // Song details
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Spacer(modifier = Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = currentSong.name,
                         color = TextPrimaryColor,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = (-0.4).sp,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                        textAlign = TextAlign.Center
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = if (isFav) "❤️" else "♡",
-                        fontSize = 24.sp,
-                        modifier = Modifier.clickable { PlaybackManager.toggleFavourite(currentSong.id) }
+                        text = "${currentSong.artist} · ${currentSong.album}",
+                        color = TextMutedColor,
+                        fontSize = 12.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(text = currentSong.artist, color = accentColor, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(text = currentSong.album, color = TextMutedColor, fontSize = 12.sp)
+                Spacer(modifier = Modifier.width(10.dp))
+                Icon(
+                    imageVector = if (isFav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDescription = "Favourite",
+                    tint = if (isFav) accentColor else TextMutedColor,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clickable { PlaybackManager.toggleFavourite(currentSong.id) }
+                )
             }
 
             // Visualizer bars
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp)
+                    .height(if (PlaybackManager.visualizerEnabled) 44.dp else 12.dp)
                     .padding(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.Bottom
             ) {
-                vizHeights.forEachIndexed { i, h ->
-                    Box(
-                        modifier = Modifier
-                            .width(5.dp)
-                            .height(h.dp)
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(accentColor.copy(alpha = 0.6f + (i % 3) * 0.15f))
-                    )
+                if (PlaybackManager.visualizerEnabled) {
+                    vizHeights.forEachIndexed { i, h ->
+                        Box(
+                            modifier = Modifier
+                                .width(5.dp)
+                                .height(h.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(accentColor.copy(alpha = 0.55f + (i % 3) * 0.15f))
+                        )
+                    }
                 }
             }
 
@@ -264,7 +316,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                     colors = SliderDefaults.colors(
                         thumbColor = accentColor,
                         activeTrackColor = accentColor,
-                        inactiveTrackColor = Color(0x26FFFFFF)
+                        inactiveTrackColor = BgSunkenColor
                     )
                 )
             }
@@ -278,30 +330,27 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 // Shuffle
                 IconButton(
                     onClick = { PlaybackManager.toggleShuffle() },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(if (PlaybackManager.shuffleOn) accentColor.copy(alpha = 0.2f) else Color.Transparent)
-                        .border(1.dp, BorderColor, CircleShape)
+                    modifier = Modifier.size(44.dp)
                 ) {
-                    Text(
-                        "⇀",
-                        color = if (PlaybackManager.shuffleOn) accentColor else TextSecondaryColor,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
+                    Icon(
+                        Icons.Filled.Shuffle,
+                        contentDescription = "Shuffle",
+                        tint = if (PlaybackManager.shuffleOn) accentColor else TextMutedColor,
+                        modifier = Modifier.size(21.dp)
                     )
                 }
 
                 // Prev
                 IconButton(
                     onClick = { PlaybackManager.prevSong() },
-                    modifier = Modifier
-                        .size(50.dp)
-                        .clip(CircleShape)
-                        .background(BgCard2Color)
-                        .border(1.dp, BorderColor, CircleShape)
+                    modifier = Modifier.size(52.dp)
                 ) {
-                    Text("⏮", color = TextPrimaryColor, fontSize = 22.sp)
+                    Icon(
+                        Icons.Filled.SkipPrevious,
+                        contentDescription = "Previous",
+                        tint = TextPrimaryColor,
+                        modifier = Modifier.size(34.dp)
+                    )
                 }
 
                 // Play
@@ -309,47 +358,50 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                     onClick = { PlaybackManager.togglePlay() },
                     modifier = Modifier
                         .size(70.dp)
+                        .shadow(
+                            elevation = if (PlaybackManager.isDarkTheme) 0.dp else 14.dp,
+                            shape = CircleShape,
+                            ambientColor = accentColor.copy(alpha = 0.5f),
+                            spotColor = accentColor.copy(alpha = 0.5f)
+                        )
                         .clip(CircleShape)
                         .background(accentColor)
                 ) {
-                    Text(
-                        if (isPlaying) "⏸" else "▶",
-                        color = Color.White,
-                        fontSize = 28.sp
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        tint = Color.White,
+                        modifier = Modifier.size(34.dp)
                     )
                 }
 
                 // Next
                 IconButton(
                     onClick = { PlaybackManager.nextSong() },
-                    modifier = Modifier
-                        .size(50.dp)
-                        .clip(CircleShape)
-                        .background(BgCard2Color)
-                        .border(1.dp, BorderColor, CircleShape)
+                    modifier = Modifier.size(52.dp)
                 ) {
-                    Text("⏭", color = TextPrimaryColor, fontSize = 22.sp)
+                    Icon(
+                        Icons.Filled.SkipNext,
+                        contentDescription = "Next",
+                        tint = TextPrimaryColor,
+                        modifier = Modifier.size(34.dp)
+                    )
                 }
 
                 // Repeat
                 val repActive = PlaybackManager.repeatMode != RepeatMode.NONE
                 IconButton(
                     onClick = { PlaybackManager.cycleRepeat() },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(if (repActive) accentColor.copy(alpha = 0.2f) else Color.Transparent)
-                        .border(1.dp, BorderColor, CircleShape)
+                    modifier = Modifier.size(44.dp)
                 ) {
-                    val label = when (PlaybackManager.repeatMode) {
-                        RepeatMode.NONE -> "↻"
-                        RepeatMode.ONE -> "🔂"
-                        RepeatMode.ALL -> "🔁"
-                    }
-                    Text(
-                        label,
-                        color = if (repActive) accentColor else TextSecondaryColor,
-                        fontSize = 18.sp
+                    Icon(
+                        imageVector = when (PlaybackManager.repeatMode) {
+                            RepeatMode.ONE -> Icons.Filled.RepeatOne
+                            else -> Icons.Filled.Repeat
+                        },
+                        contentDescription = "Repeat",
+                        tint = if (repActive) accentColor else TextMutedColor,
+                        modifier = Modifier.size(21.dp)
                     )
                 }
             }
@@ -362,7 +414,12 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("🔈", fontSize = 18.sp)
+                Icon(
+                    Icons.Filled.VolumeMute,
+                    contentDescription = null,
+                    tint = TextMutedColor,
+                    modifier = Modifier.size(18.dp)
+                )
                 Slider(
                     value = PlaybackManager.volume,
                     onValueChange = { PlaybackManager.setPlayerVolume(it) },
@@ -370,10 +427,70 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                     colors = SliderDefaults.colors(
                         thumbColor = accentColor,
                         activeTrackColor = accentColor,
-                        inactiveTrackColor = Color(0x26FFFFFF)
+                        inactiveTrackColor = BgSunkenColor
                     )
                 )
-                Text("🔊", fontSize = 18.sp)
+                Icon(
+                    Icons.Filled.VolumeUp,
+                    contentDescription = null,
+                    tint = TextMutedColor,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            // Effect presets - the app's headline feature, so it sits above the
+            // technical controls rather than buried in a sub-sheet.
+            Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "EFFECTS",
+                        color = TextMutedColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.2.sp
+                    )
+                    Text(
+                        text = "Save & Share",
+                        color = accentColor,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clickable { showPresets = true }
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PlaybackManager.FX_PRESETS.forEach { preset ->
+                        val selected = PlaybackManager.activePreset == preset.id
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(99.dp))
+                                .background(if (selected) accentColor else BgSunkenColor)
+                                .clickable { PlaybackManager.applyFxPreset(preset) }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(preset.emoji, fontSize = 13.sp)
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = preset.label,
+                                color = if (selected) Color.White else TextSecondaryColor,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
             }
 
             // Sound Editing dashboard
@@ -413,7 +530,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Vocal Isolator Card
-                    val isolatorModeLabel = when (PlaybackManager.vocalProcessor.mode) {
+                    val isolatorModeLabel = when (PlaybackManager.vocalMode) {
                         VocalProcessor.Mode.OFF -> "Off"
                         VocalProcessor.Mode.ISOLATE_INSTRUMENTAL -> "Instrumental"
                         VocalProcessor.Mode.ISOLATE_VOCAL -> "Vocals Only"
@@ -422,7 +539,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                         icon = "🎙️",
                         title = "Vocal Isolator",
                         subtitle = isolatorModeLabel,
-                        active = PlaybackManager.vocalProcessor.mode != VocalProcessor.Mode.OFF,
+                        active = PlaybackManager.vocalMode != VocalProcessor.Mode.OFF,
                         accentColor = accentColor,
                         modifier = Modifier.weight(1f),
                         onClick = { showVocalIsolatorModal = true }
@@ -446,7 +563,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 }
             }
 
-            // Quick Actions: Karaoke Lyrics & Queue
+            // Quick Actions
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -454,15 +571,67 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 ExtraButton(
-                    label = "🎤 Karaoke Lyrics",
+                    label = "🎤 Lyrics",
                     modifier = Modifier.weight(1f),
                     onClick = { showLyrics = true }
                 )
                 ExtraButton(
-                    label = "☰ Up Next Queue",
+                    label = "☰ Queue",
                     modifier = Modifier.weight(1f),
                     onClick = { showQueue = true }
                 )
+            }
+
+            // Studio rack, inline with the rest of the controls rather than hidden in a
+            // sheet. The screen already scrolls, and the disc that used to sit at the
+            // top made room for it.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 14.dp, bottom = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "STUDIO RACK",
+                        color = TextMutedColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.2.sp
+                    )
+                    Text(
+                        text = if (com.retro.grooveplayer.dsp.RackSettings.anyEnabled) "Active" else "Off",
+                        color = if (com.retro.grooveplayer.dsp.RackSettings.anyEnabled) accentColor else TextMutedColor,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                EffectRackContent(accentColor = accentColor)
+
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(99.dp))
+                        .background(accentColor)
+                        .clickable { showPresets = true }
+                        .padding(vertical = 15.dp),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "Save this edit",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
@@ -482,6 +651,37 @@ fun PlayerScreen(onBackClick: () -> Unit) {
             if (lyrics.isNotEmpty()) {
                 listState.animateScrollToItem(activeLineIdx)
             }
+        }
+
+        if (lyrics.isEmpty()) {
+            // Previously this showed invented placeholder verses as if they were the
+            // song's real lyrics.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(220.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("🎤", fontSize = 36.sp)
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "No lyrics for this track",
+                    color = TextPrimaryColor,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Put a matching .lrc file next to the audio file and it will sync here automatically.",
+                    color = TextMutedColor,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                )
+            }
+            return@BottomModal
         }
 
         LazyColumn(
@@ -630,7 +830,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = if (mins == 0) "End Song" else "$mins min",
+                                    text = if (mins == 0) "End Song" else PlaybackManager.formatTimerLabel(mins),
                                     color = TextPrimaryColor,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
@@ -644,7 +844,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
 
                 // Custom Slider
                 Text(
-                    text = "Custom Sleep Timer: $customMins min",
+                    text = "Custom Sleep Timer: ${PlaybackManager.formatTimerLabel(customMins)}",
                     color = TextSecondaryColor,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
@@ -692,7 +892,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "$mins min",
+                                    text = PlaybackManager.formatTimerLabel(mins),
                                     color = TextPrimaryColor,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
@@ -706,7 +906,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
 
                 // Custom Slider
                 Text(
-                    text = "Start Music in: $customStartMins min",
+                    text = "Start Music in: ${PlaybackManager.formatTimerLabel(customStartMins)}",
                     color = TextSecondaryColor,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
@@ -777,10 +977,11 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 )
                 Slider(
                     value = PlaybackManager.fxSpeed,
-                    onValueChange = {
-                        PlaybackManager.fxSpeed = it
-                        PlaybackManager.updatePlaybackParameters()
-                    },
+                    // Retiming the audio pipeline mid-drag rebuffers the player on every
+                    // frame, so only the label follows the thumb - the engine is retuned
+                    // once, when the drag ends.
+                    onValueChange = { PlaybackManager.fxSpeed = it },
+                    onValueChangeFinished = { PlaybackManager.updatePlaybackParameters() },
                     valueRange = 0.5f..2.0f,
                     colors = SliderDefaults.colors(thumbColor = accentColor, activeTrackColor = accentColor)
                 )
@@ -801,10 +1002,8 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 )
                 Slider(
                     value = PlaybackManager.fxPitch.toFloat(),
-                    onValueChange = {
-                        PlaybackManager.fxPitch = it.toInt()
-                        PlaybackManager.updatePlaybackParameters()
-                    },
+                    onValueChange = { PlaybackManager.fxPitch = it.toInt() },
+                    onValueChangeFinished = { PlaybackManager.updatePlaybackParameters() },
                     valueRange = -5f..5f,
                     steps = 9,
                     colors = SliderDefaults.colors(thumbColor = accentColor, activeTrackColor = accentColor)
@@ -826,9 +1025,8 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 )
                 Slider(
                     value = PlaybackManager.fxReverb.toFloat(),
-                    onValueChange = {
-                        PlaybackManager.applyReverb(it.toInt())
-                    },
+                    onValueChange = { PlaybackManager.fxReverb = it.toInt() },
+                    onValueChangeFinished = { PlaybackManager.applyReverb(PlaybackManager.fxReverb) },
                     valueRange = 0f..100f,
                     colors = SliderDefaults.colors(thumbColor = accentColor, activeTrackColor = accentColor)
                 )
@@ -917,8 +1115,118 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 }
             }
         }
-        // Vocal Isolator Bottom Sheet
-        BottomModal(visible = showVocalIsolatorModal, onDismissRequest = { showVocalIsolatorModal = false }, title = "Live Vocal Isolator 🎙️") {
+    }
+
+    // Export / share sheet. Rendering the processed version to a file is what turns
+    // the effects from a private playback toy into something people can post.
+    LaunchedEffect(PlaybackManager.exportedUri) {
+        PlaybackManager.exportedUri?.let { uri ->
+            showPresets = false
+            shareAudio(context, uri, currentSong.name, PlaybackManager.exportedLabel)
+            PlaybackManager.exportedUri = null
+        }
+    }
+    LaunchedEffect(PlaybackManager.exportError) {
+        PlaybackManager.exportError?.let { message ->
+            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+            PlaybackManager.exportError = null
+        }
+    }
+
+    BottomModal(
+        visible = showPresets,
+        onDismissRequest = { showPresets = false },
+        title = "Save & Share"
+    ) {
+        val preset = PlaybackManager.FX_PRESETS
+            .firstOrNull { it.id == PlaybackManager.activePreset }
+            ?: PlaybackManager.FX_PRESETS.first()
+
+        Text(
+            text = "Render \"${currentSong.name}\" with the current effects into a new audio file you can share.",
+            color = TextSecondaryColor,
+            fontSize = 13.sp,
+            lineHeight = 19.sp
+        )
+        Spacer(Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(BgSunkenColor)
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(preset.emoji, fontSize = 22.sp)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = preset.label,
+                    color = TextPrimaryColor,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "${String.format("%.2f", PlaybackManager.fxSpeed)}x · " +
+                        "pitch ${PlaybackManager.fxPitch} · reverb ${PlaybackManager.fxReverb}%",
+                    color = TextMutedColor,
+                    fontSize = 12.sp
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        val progress = PlaybackManager.exportProgress
+        if (progress != null) {
+            LinearProgressIndicator(
+                progress = progress,
+                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                color = accentColor,
+                trackColor = BgSunkenColor
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "Rendering ${(progress * 100).toInt()}% - keep the app open",
+                color = TextMutedColor,
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(99.dp))
+                    .background(accentColor)
+                    .clickable { PlaybackManager.startExport(currentSong, preset) }
+                    .padding(vertical = 15.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("⬇", color = Color.White, fontSize = 16.sp)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Export & Share",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "Saved to Music/RetroMuse on your device.",
+                color = TextMutedColor,
+                fontSize = 11.5.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+
+    // Vocal Isolator Bottom Sheet
+    BottomModal(visible = showVocalIsolatorModal, onDismissRequest = { showVocalIsolatorModal = false }, title = "Live Vocal Isolator 🎙️") {
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -932,7 +1240,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
-                val currentMode = PlaybackManager.vocalProcessor.mode
+                val currentMode = PlaybackManager.vocalMode
                 listOf(
                     Triple(com.retro.grooveplayer.playback.VocalProcessor.Mode.OFF, "🎙️ Normal Mode", "Play standard audio without filtering"),
                     Triple(com.retro.grooveplayer.playback.VocalProcessor.Mode.ISOLATE_INSTRUMENTAL, "🎸 Isolate Instrumentals", "Remove vocals using phase subtraction"),
@@ -946,7 +1254,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                             .background(if (isSelected) accentColor.copy(alpha = 0.15f) else BgCard2Color)
                             .border(1.dp, if (isSelected) accentColor else BorderColor, RoundedCornerShape(10.dp))
                             .clickable {
-                                PlaybackManager.vocalProcessor.mode = mode
+                                PlaybackManager.changeVocalMode(mode)
                                 showVocalIsolatorModal = false
                             }
                             .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -964,7 +1272,6 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 }
             }
         }
-    }
 }
 
 @Composable
@@ -977,44 +1284,43 @@ fun DashboardCard(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    Box(
-        modifier = modifier
-            .height(68.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(BgCardColor.copy(alpha = 0.8f))
-            .border(
-                1.dp,
-                if (active) accentColor else BorderColor,
-                RoundedCornerShape(12.dp)
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+    com.retro.grooveplayer.ui.components.SoftCard(
+        modifier = modifier.height(70.dp),
+        corner = 16.dp,
+        elevation = 4.dp,
+        background = if (active) accentColor.copy(alpha = 0.10f) else BgCardColor
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxSize()
+            horizontalArrangement = Arrangement.spacedBy(11.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 13.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(if (active) accentColor.copy(alpha = 0.15f) else Color(0x10FFFFFF)),
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(if (active) accentColor.copy(alpha = 0.18f) else BgSunkenColor),
                 contentAlignment = Alignment.Center
             ) {
-                Text(icon, fontSize = 18.sp)
+                Text(icon, fontSize = 16.sp)
             }
             Column(verticalArrangement = Arrangement.Center) {
                 Text(
                     text = title,
                     color = TextPrimaryColor,
                     fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
+                Spacer(Modifier.height(1.dp))
                 Text(
                     text = subtitle,
                     color = if (active) accentColor else TextMutedColor,
-                    fontSize = 11.sp,
+                    fontSize = 11.5.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -1034,21 +1340,16 @@ fun ExtraButton(
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(99.dp))
-            .background(if (active) activeColor.copy(alpha = 0.15f) else BgCardColor)
-            .border(
-                width = 1.dp,
-                color = if (active) activeColor else BorderColor,
-                shape = RoundedCornerShape(99.dp)
-            )
+            .background(if (active) activeColor.copy(alpha = 0.14f) else BgSunkenColor)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 7.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = label,
             color = if (active) activeColor else TextSecondaryColor,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.SemiBold
         )
     }
 }

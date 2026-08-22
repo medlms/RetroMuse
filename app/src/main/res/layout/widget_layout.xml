@@ -1,29 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="horizontal"
-    android:background="#FF0C0A15"
+    android:background="@drawable/widget_background"
     android:gravity="center_vertical"
-    android:padding="10dp"
-    android:weightSum="10">
+    android:padding="12dp">
 
-    <!-- Left: App Logo -->
+    <!-- Album artwork, falling back to the launcher icon -->
     <ImageView
-        android:id="@+id/widget_logo"
-        android:layout_width="0dp"
-        android:layout_height="40dp"
-        android:layout_weight="1.5"
+        android:id="@+id/widget_art"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:scaleType="centerCrop"
         android:src="@mipmap/ic_launcher_round"
-        android:contentDescription="Logo" />
+        android:contentDescription="Album artwork" />
 
-    <!-- Center: Track details -->
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_weight="5.5"
+        android:layout_weight="1"
         android:orientation="vertical"
-        android:layout_marginStart="8dp"
+        android:layout_marginStart="12dp"
         android:layout_marginEnd="8dp">
 
         <TextView
@@ -31,7 +30,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="RetroMuse"
-            android:textColor="#FFFFF2"
+            android:textColor="#FF171214"
             android:textSize="14sp"
             android:textStyle="bold"
             android:maxLines="1"
@@ -42,43 +41,39 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Select a song to start"
-            android:textColor="#FFA49EB2"
-            android:textSize="11sp"
+            android:textColor="#FF938A8F"
+            android:textSize="12sp"
             android:maxLines="1"
             android:ellipsize="end" />
     </LinearLayout>
 
-    <!-- Right: Play/Pause and Next button -->
-    <LinearLayout
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="3"
-        android:orientation="horizontal"
-        android:gravity="center"
-        android:weightSum="2">
+    <ImageView
+        android:id="@+id/widget_btn_prev"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:padding="8dp"
+        android:src="@android:drawable/ic_media_previous"
+        android:contentDescription="Previous"
+        android:clickable="true"
+        android:focusable="true" />
 
-        <TextView
-            android:id="@+id/widget_btn_play"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="▶"
-            android:textColor="#FF00FFFF"
-            android:textSize="22sp"
-            android:gravity="center"
-            android:clickable="true"
-            android:focusable="true" />
+    <ImageView
+        android:id="@+id/widget_btn_play"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:padding="9dp"
+        android:src="@android:drawable/ic_media_play"
+        android:contentDescription="Play or pause"
+        android:clickable="true"
+        android:focusable="true" />
 
-        <TextView
-            android:id="@+id/widget_btn_next"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="⏭"
-            android:textColor="#FFFFF2"
-            android:textSize="22sp"
-            android:gravity="center"
-            android:clickable="true"
-            android:focusable="true" />
-    </LinearLayout>
+    <ImageView
+        android:id="@+id/widget_btn_next"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:padding="8dp"
+        android:src="@android:drawable/ic_media_next"
+        android:contentDescription="Next"
+        android:clickable="true"
+        android:focusable="true" />
 </LinearLayout>

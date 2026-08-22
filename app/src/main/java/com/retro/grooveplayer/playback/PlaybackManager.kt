@@ -98,8 +98,35 @@ object PlaybackManager {
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var progressJob: Job? = null
+    private var serviceStarted = false
 
-    val ACCENT_PALETTE = listOf("#a855f7", "#3b82f6", "#ec4899", "#10b981", "#f59e0b", "#ef4444")
+    // Vocal isolator mode, mirrored here so Compose recomposes when it changes.
+    var vocalMode by mutableStateOf(VocalProcessor.Mode.OFF)
+
+    // Persisted preferences, previously local-only state in SettingsScreen.
+    var gaplessEnabled by mutableStateOf(true)
+    var crossfadeEnabled by mutableStateOf(false)
+    var surroundEnabled by mutableStateOf(false)
+    var visualizerEnabled by mutableStateOf(true)
+    var spinningDiscEnabled by mutableStateOf(true)
+    var sortBy by mutableStateOf("Title")
+
+    /** Set when a track fails to open; the UI shows it once then clears it. */
+    var playbackError by mutableStateOf<String?>(null)
+
+    /** Launches counted so far. Ads and the review prompt stay out of the way early on. */
+    var sessionCount = 0
+        private set
+
+    /** A banner before the user has played anything is the classic uninstall trigger. */
+    val shouldShowAds: Boolean get() = sessionCount >= 3
+
+    fun shouldAskForReview(): Boolean =
+        sessionCount >= 5 && recentlyPlayed.size >= 5 && !storageManager.hasRequestedReview()
+
+    fun markReviewRequested() = storageManager.markReviewRequested()
+
+    val ACCENT_PALETTE = listOf("#7C4DFF", "#2563EB", "#D81B60", "#00875A", "#C77A00", "#DC2626")
     
     val EQ_PRESETS = mapOf(
         "Flat" to listOf(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
@@ -114,10 +141,34 @@ object PlaybackManager {
         "Dance" to listOf(5, 4, 2, 0, 0, -2, -3, -3, 0, 0)
     )
 
+    /**
+     * True once [init] has run. Every entry point outside MainActivity - the widget,
+     * the alarm receiver, a START_STICKY service restart - can be reached in a cold
+     * process, so they must check this (or call [ensureInitialised]) before touching
+     * the player.
+     */
+    @Volatile
+    var isInitialised = false
+        private set
+
+    /** Safe to call from any entry point; initialises on first use and is idempotent. */
+    @Synchronized
+    fun ensureInitialised(ctx: Context) {
+        if (!isInitialised) init(ctx)
+    }
+
+    @Synchronized
     fun init(ctx: Context) {
+        if (isInitialised) return
         context = ctx.applicationContext
         storageManager = StorageManager(context)
-        
+
+        if (storageManager.needsThemeMigration()) {
+            storageManager.saveThemeMode("light")
+            storageManager.saveAccentColor("#7C4DFF")
+            storageManager.markThemeMigrated()
+        }
+
         // Load settings
         favourites = storageManager.getFavourites()
         playlists = storageManager.getPlaylists()
@@ -130,9 +181,26 @@ object PlaybackManager {
         eqPreset = storageManager.getEqPreset()
         speed = storageManager.getSpeed()
         fxSpeed = speed
-        fxBass = if (storageManager.getBassBoost()) 80 else 0
-        
+        fxPitch = storageManager.getPitch()
+        fxReverb = storageManager.getReverb()
+        fxBass = storageManager.getBassLevel()
+        sortBy = storageManager.getSortBy()
+        customEqBands = storageManager.getCustomEqBands()
+
+        sessionCount = storageManager.incrementSessionCount()
+        gaplessEnabled = storageManager.getGapless()
+        crossfadeEnabled = storageManager.getCrossfade()
+        surroundEnabled = storageManager.getSurround()
+        visualizerEnabled = storageManager.getVisualizerEnabled()
+        spinningDiscEnabled = storageManager.getSpinningDiscEnabled()
+
         vocalProcessor = VocalProcessor()
+        vocalMode = try {
+            VocalProcessor.Mode.valueOf(storageManager.getVocalMode())
+        } catch (e: Exception) {
+            VocalProcessor.Mode.OFF
+        }
+        vocalProcessor.mode = vocalMode
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -155,26 +223,24 @@ object PlaybackManager {
 
         exoPlayer = ExoPlayer.Builder(context, renderersFactory)
             .setAudioAttributes(audioAttributes, true)
+            // Pause instead of blasting the speaker when headphones are pulled out or
+            // Bluetooth drops.
+            .setHandleAudioBecomingNoisy(true)
             .build().apply {
             volume = PlaybackManager.volume
+            skipSilenceEnabled = gaplessEnabled
             addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlayingChanged: Boolean) {
                     PlaybackManager.isPlaying = isPlayingChanged
                     PlaybackManager.updateWidgets()
+                    // Never (re)start the service from here. This fires on every transient
+                    // pause/resume - including the rebuffer caused by an effects change - and
+                    // each startForegroundService() call arms a 5s startForeground() deadline
+                    // that the media session cannot always meet, killing the process.
                     if (isPlayingChanged) {
                         PlaybackManager.startProgressTracker()
-                        try {
-                            androidx.core.content.ContextCompat.startForegroundService(context, Intent(context, PlaybackService::class.java))
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
                     } else {
                         PlaybackManager.stopProgressTracker()
-                        try {
-                            context.startService(Intent(context, PlaybackService::class.java))
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
                     }
                 }
 
@@ -190,8 +256,33 @@ object PlaybackManager {
                         PlaybackManager.setupNativeAudioEffects(audioSessionId)
                     }
                 }
+
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    // A missing or unreadable file used to stop playback dead with no
+                    // explanation. Report it and move on to the next track.
+                    error.printStackTrace()
+                    val failed = PlaybackManager.currentSong
+                    PlaybackManager.playbackError =
+                        "Can't play \"${failed?.name ?: "this track"}\" - the file may have been moved or deleted."
+                    PlaybackManager.skipAfterError()
+                }
             })
         }
+
+        isInitialised = true
+    }
+
+    /** Consecutive failures, so a folder of dead files can't spin forever. */
+    private var errorSkipCount = 0
+
+    private fun skipAfterError() {
+        if (errorSkipCount >= 3 || queue.isEmpty()) {
+            errorSkipCount = 0
+            exoPlayer.pause()
+            return
+        }
+        errorSkipCount++
+        nextSong()
     }
 
     private fun setupNativeAudioEffects(sessionId: Int) {
@@ -240,55 +331,123 @@ object PlaybackManager {
         }
     }
 
-    var customEqBands by mutableStateOf(listOf(0, 0, 0, 0, 0)) // 5 bands in dB (-6 to +6)
+    // One entry per EQ_PRESETS frequency, so custom curves and presets share a scale.
+    var customEqBands by mutableStateOf(List(10) { 0 })
 
     fun setCustomBandLevel(bandIndex: Int, db: Int) {
         val list = customEqBands.toMutableList()
-        if (bandIndex in list.indices) {
-            list[bandIndex] = db
-            customEqBands = list
-            eqPreset = "Custom"
-            
-            val eq = equalizer ?: return
-            try {
-                val numBands = eq.numberOfBands.toInt()
-                val minLevel = eq.bandLevelRange[0]
-                val maxLevel = eq.bandLevelRange[1]
-                val mB = (db * 100).toInt().coerceIn(minLevel.toInt(), maxLevel.toInt())
+        if (bandIndex !in list.indices) return
+        list[bandIndex] = db
+        customEqBands = list
+        eqPreset = "Custom"
+        storageManager.saveCustomEqBands(list)
+        storageManager.saveEqPreset("Custom")
+        applyBandLevels(list)
+    }
 
-                if (bandIndex < numBands) {
-                    eq.setBandLevel(bandIndex.toShort(), mB.toShort())
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
+    /**
+     * Maps our ten nominal frequencies onto whatever bands the hardware actually
+     * exposes. Previously the slider index was used as the hardware band index, so a
+     * five-slider UI drove bands 0-4 of a ten-band equalizer.
+     */
+    private fun applyBandLevels(bands: List<Int>) {
+        val eq = equalizer ?: return
+        try {
+            val numBands = eq.numberOfBands.toInt()
+            val minLevel = eq.bandLevelRange[0]
+            val maxLevel = eq.bandLevelRange[1]
+
+            for (band in 0 until numBands) {
+                val centerFreq = eq.getCenterFreq(band.toShort()) / 1000 // Hz
+                val db = bands.getOrElse(findClosestBandIndex(centerFreq)) { 0 }
+                val mB = (db * 100).coerceIn(minLevel.toInt(), maxLevel.toInt())
+                eq.setBandLevel(band.toShort(), mB.toShort())
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
-    fun updateSongMetadata(songId: String, newName: String, newArtist: String, newAlbum: String) {
-        songs = songs.map { song ->
-            if (song.id == songId) {
-                // Perform real MediaStore file tag update
-                try {
-                    val uri = Uri.parse(song.uri)
-                    if (uri.scheme == "content") {
-                        val values = android.content.ContentValues().apply {
-                            put(MediaStore.Audio.Media.TITLE, newName)
-                            put(MediaStore.Audio.Media.ARTIST, newArtist)
-                            put(MediaStore.Audio.Media.ALBUM, newAlbum)
-                        }
-                        context.contentResolver.update(uri, values, null, null)
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
+    /**
+     * Writes tags back to the file where possible.
+     *
+     * On Android 11+ an app may not modify a MediaStore entry it does not own, so the
+     * write throws RecoverableSecurityException. That used to be swallowed, which meant
+     * the dialog reported success, the in-app list changed, and the file was untouched -
+     * the edit then vanished on the next scan. We now surface the system consent prompt
+     * through [pendingWriteRequest] and only report success when the write lands.
+     *
+     * @return true if the change reached the file.
+     */
+    fun updateSongMetadata(
+        songId: String,
+        newName: String,
+        newArtist: String,
+        newAlbum: String
+    ): Boolean {
+        val song = songs.firstOrNull { it.id == songId } ?: return false
+        var wroteToFile = false
+
+        try {
+            val uri = Uri.parse(song.uri)
+            if (uri.scheme == "content") {
+                val values = android.content.ContentValues().apply {
+                    put(MediaStore.Audio.Media.TITLE, newName)
+                    put(MediaStore.Audio.Media.ARTIST, newArtist)
+                    put(MediaStore.Audio.Media.ALBUM, newAlbum)
                 }
-                song.copy(name = newName, artist = newArtist, album = newAlbum)
-            } else song
+                wroteToFile = context.contentResolver.update(uri, values, null, null) > 0
+            }
+        } catch (e: SecurityException) {
+            // Ask the user for write access to this specific file, then retry.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                try {
+                    val request = MediaStore.createWriteRequest(
+                        context.contentResolver,
+                        listOf(Uri.parse(song.uri))
+                    )
+                    pendingWriteRequest = PendingTagWrite(
+                        intentSender = request.intentSender,
+                        songId = songId,
+                        name = newName,
+                        artist = newArtist,
+                        album = newAlbum
+                    )
+                } catch (inner: Exception) {
+                    inner.printStackTrace()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // Always update the in-app view so the library reflects the edit immediately.
+        songs = songs.map {
+            if (it.id == songId) it.copy(name = newName, artist = newArtist, album = newAlbum) else it
         }
         storageManager.saveCachedSongs(songs)
         if (currentSong?.id == songId) {
             currentSong = currentSong?.copy(name = newName, artist = newArtist, album = newAlbum)
         }
+        return wroteToFile
+    }
+
+    /** A tag write waiting on the system's per-file permission dialog. */
+    data class PendingTagWrite(
+        val intentSender: android.content.IntentSender,
+        val songId: String,
+        val name: String,
+        val artist: String,
+        val album: String
+    )
+
+    var pendingWriteRequest by mutableStateOf<PendingTagWrite?>(null)
+
+    /** Called after the user grants the write request. */
+    fun retryPendingWrite() {
+        val pending = pendingWriteRequest ?: return
+        pendingWriteRequest = null
+        updateSongMetadata(pending.songId, pending.name, pending.artist, pending.album)
     }
 
     private fun getFilePathFromUri(uriString: String): String? {
@@ -354,41 +513,23 @@ object PlaybackManager {
                 }
             }
         }
-        // Fallback to sample synchronized lyrics
-        return listOf(
-            com.retro.grooveplayer.data.LyricLine(0L, "♪ (${song.name} - ${song.artist}) ♪"),
-            com.retro.grooveplayer.data.LyricLine(3000L, "Intro music playing..."),
-            com.retro.grooveplayer.data.LyricLine(12000L, "Feeling the rhythm in the night"),
-            com.retro.grooveplayer.data.LyricLine(20000L, "Groove Player taking taking flight"),
-            com.retro.grooveplayer.data.LyricLine(28000L, "Turn the bass up, let it flow"),
-            com.retro.grooveplayer.data.LyricLine(36000L, "Lost inside the audio glow"),
-            com.retro.grooveplayer.data.LyricLine(45000L, "Every beat, every sound"),
-            com.retro.grooveplayer.data.LyricLine(54000L, "Best player in the town"),
-            com.retro.grooveplayer.data.LyricLine(65000L, "♪ Outro fading smoothly... ♪")
-        )
+        // No .lrc alongside the track. This used to return invented placeholder lines
+        // presented as the song's real lyrics; an empty list lets the UI say so.
+        return emptyList()
     }
 
     fun applyEqPreset(preset: String) {
         eqPreset = preset
         storageManager.saveEqPreset(preset)
-        val eq = equalizer ?: return
-        val bands = EQ_PRESETS[preset] ?: EQ_PRESETS["Flat"] ?: return
-        
-        try {
-            val numBands = eq.numberOfBands.toInt()
-            val minLevel = eq.bandLevelRange[0]
-            val maxLevel = eq.bandLevelRange[1]
-
-            for (band in 0 until numBands) {
-                val centerFreq = eq.getCenterFreq(band.toShort()) / 1000 // In Hz
-                val closestIdx = findClosestBandIndex(centerFreq)
-                val db = bands.getOrElse(closestIdx) { 0 }
-                val mB = (db * 100).toInt().coerceIn(minLevel.toInt(), maxLevel.toInt())
-                eq.setBandLevel(band.toShort(), mB.toShort())
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
+        val bands = if (preset == "Custom") {
+            customEqBands
+        } else {
+            EQ_PRESETS[preset] ?: EQ_PRESETS["Flat"] ?: return
         }
+        if (preset != "Custom") {
+            customEqBands = bands
+        }
+        applyBandLevels(bands)
     }
 
     private fun findClosestBandIndex(freqHz: Int): Int {
@@ -407,6 +548,8 @@ object PlaybackManager {
 
     fun applyBassBoost(percent: Int) {
         fxBass = percent
+        storageManager.saveBassLevel(percent)
+        storageManager.saveBassBoost(percent > 0)
         val boost = bassBoost ?: return
         try {
             if (percent > 0) {
@@ -436,6 +579,7 @@ object PlaybackManager {
 
     fun applyReverb(percent: Int) {
         fxReverb = percent
+        storageManager.saveReverb(percent)
         val reverb = presetReverb ?: return
         try {
             val preset = when {
@@ -460,6 +604,158 @@ object PlaybackManager {
                 val songToPlay = currentSong ?: songs[0]
                 playSong(songToPlay, songs)
             }
+        }
+    }
+
+    // --- Settings, each persisted so it survives leaving the screen -----------
+
+    fun changeGapless(enabled: Boolean) {
+        gaplessEnabled = enabled
+        storageManager.saveGapless(enabled)
+        try {
+            exoPlayer.skipSilenceEnabled = enabled
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun changeCrossfade(enabled: Boolean) {
+        crossfadeEnabled = enabled
+        storageManager.saveCrossfade(enabled)
+    }
+
+    fun changeSurround(enabled: Boolean) {
+        surroundEnabled = enabled
+        storageManager.saveSurround(enabled)
+        applyVirtualizer(enabled)
+    }
+
+    fun changeVisualizerEnabled(enabled: Boolean) {
+        visualizerEnabled = enabled
+        storageManager.saveVisualizerEnabled(enabled)
+    }
+
+    fun changeSpinningDisc(enabled: Boolean) {
+        spinningDiscEnabled = enabled
+        storageManager.saveSpinningDiscEnabled(enabled)
+    }
+
+    fun changeSortBy(value: String) {
+        sortBy = value
+        storageManager.saveSortBy(value)
+    }
+
+    // --- Named effect presets -------------------------------------------------
+    // These double as the app's store keywords: people search for "slowed reverb",
+    // "nightcore", "vocal remover" and "8D audio", not for "pitch shift".
+
+    data class FxPreset(
+        val id: String,
+        val label: String,
+        val emoji: String,
+        val description: String,
+        val speed: Float,
+        val pitch: Int,
+        val reverb: Int,
+        val bass: Int,
+        val vocal: VocalProcessor.Mode,
+        val spatial: Boolean
+    )
+
+    val FX_PRESETS = listOf(
+        FxPreset("none", "Original", "🎧", "No processing", 1.0f, 0, 0, 0, VocalProcessor.Mode.OFF, false),
+        FxPreset("slowed", "Slowed + Reverb", "🌙", "Dreamy, half-speed feel", 0.82f, 0, 55, 25, VocalProcessor.Mode.OFF, false),
+        FxPreset("nightcore", "Nightcore", "⚡", "Sped up and pitched higher", 1.25f, 3, 10, 0, VocalProcessor.Mode.OFF, false),
+        FxPreset("karaoke", "Karaoke", "🎤", "Vocals removed, music kept", 1.0f, 0, 15, 20, VocalProcessor.Mode.ISOLATE_INSTRUMENTAL, false),
+        FxPreset("acapella", "Vocals Only", "🗣️", "Isolate the singing", 1.0f, 0, 0, 0, VocalProcessor.Mode.ISOLATE_VOCAL, false),
+        FxPreset("eightd", "8D Audio", "🌀", "Sound rotates around your head", 1.0f, 0, 45, 15, VocalProcessor.Mode.OFF, true),
+        FxPreset("bass", "Bass Boosted", "🔊", "Heavy low end", 1.0f, 0, 10, 90, VocalProcessor.Mode.OFF, false),
+        FxPreset("sleep", "Sleep", "😴", "Slow, soft and wide", 0.9f, 0, 70, 10, VocalProcessor.Mode.OFF, false)
+    )
+
+    var activePreset by mutableStateOf("none")
+
+    var spatialAudio by mutableStateOf(false)
+
+    fun applyFxPreset(preset: FxPreset) {
+        activePreset = preset.id
+        fxSpeed = preset.speed
+        fxPitch = preset.pitch
+        spatialAudio = preset.spatial
+        vocalProcessor.spatialAudio = preset.spatial
+        changeVocalMode(preset.vocal)
+        applyReverb(preset.reverb)
+        applyBassBoost(preset.bass)
+        updatePlaybackParameters()
+    }
+
+    // --- Export ---------------------------------------------------------------
+    // Held on the manager rather than in the composable so a render survives the user
+    // navigating away from the player mid-export.
+
+    var exportProgress by mutableStateOf<Float?>(null)
+        private set
+
+    /** Set when a render finishes; the UI consumes it to open the share sheet. */
+    var exportedUri by mutableStateOf<Uri?>(null)
+    var exportError by mutableStateOf<String?>(null)
+    var exportedLabel by mutableStateOf("")
+
+    private var exportJob: Job? = null
+
+    fun startExport(song: Song, preset: FxPreset) {
+        if (exportJob?.isActive == true) return
+        exportedLabel = preset.label
+        exportProgress = 0f
+        exportJob = coroutineScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                AudioExporter.export(
+                    context = context,
+                    song = song,
+                    presetLabel = preset.label,
+                    speed = fxSpeed,
+                    semitones = fxPitch,
+                    reverbPercent = fxReverb,
+                    vocalMode = vocalMode,
+                    spatial = spatialAudio
+                ) { fraction -> exportProgress = fraction }
+            }
+            exportProgress = null
+            if (result.outputUri != null) {
+                exportedUri = result.outputUri
+                // The new file is a real track; make it visible in the library.
+                scanDeviceLibrary()
+            } else {
+                exportError = result.error ?: "Export failed."
+            }
+        }
+    }
+
+    fun changeSpatialAudio(enabled: Boolean) {
+        spatialAudio = enabled
+        vocalProcessor.spatialAudio = enabled
+    }
+
+    fun changeVocalMode(mode: VocalProcessor.Mode) {
+        vocalMode = mode
+        vocalProcessor.mode = mode
+        storageManager.saveVocalMode(mode.name)
+    }
+
+    /**
+     * Starts the playback service once per process. Called while the app is in the
+     * foreground (from playSong), which is the only reliably allowed moment on API 31+.
+     */
+    private fun ensureServiceStarted() {
+        if (serviceStarted) return
+        try {
+            androidx.core.content.ContextCompat.startForegroundService(
+                context,
+                Intent(context, PlaybackService::class.java)
+            )
+            serviceStarted = true
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -492,6 +788,7 @@ object PlaybackManager {
         
         updatePlaybackParameters()
         exoPlayer.play()
+        ensureServiceStarted()
 
         buildQueue(songs, song.id)
 
@@ -533,6 +830,9 @@ object PlaybackManager {
     }
 
     fun updatePlaybackParameters() {
+        storageManager.saveSpeed(fxSpeed)
+        storageManager.savePitch(fxPitch)
+        speed = fxSpeed
         try {
             val pitchFactor = 2.0.pow(fxPitch.toDouble() / 12.0).toFloat()
             val rate = fxSpeed * pitchFactor
@@ -564,6 +864,53 @@ object PlaybackManager {
         queueIndex = prevIdx
         val songIdx = queue[prevIdx]
         songs.getOrNull(songIdx)?.let { playSong(it, songs) }
+    }
+
+    /** Queues a track to play immediately after the current one. */
+    fun playNext(song: Song) {
+        val songIdx = songs.indexOfFirst { it.id == song.id }
+        if (songIdx < 0) return
+        val q = queue.toMutableList()
+        q.remove(songIdx)
+        val insertAt = (queueIndex + 1).coerceIn(0, q.size)
+        q.add(insertAt, songIdx)
+        queue = q
+    }
+
+    /** Appends a track to the end of the queue. */
+    fun addToQueue(song: Song) {
+        val songIdx = songs.indexOfFirst { it.id == song.id }
+        if (songIdx < 0) return
+        val q = queue.toMutableList()
+        q.remove(songIdx)
+        q.add(songIdx)
+        queue = q
+    }
+
+    fun removeFromQueue(queuePosition: Int) {
+        if (queuePosition !in queue.indices || queuePosition == queueIndex) return
+        val q = queue.toMutableList()
+        q.removeAt(queuePosition)
+        if (queuePosition < queueIndex) queueIndex--
+        queue = q
+    }
+
+    /** Starts the given list shuffled - the "shuffle all" entry point. */
+    fun shuffleAll(songList: List<Song> = songs) {
+        if (songList.isEmpty()) return
+        shuffleOn = true
+        playSong(songList.random(), songList)
+    }
+
+    fun playAll(songList: List<Song> = songs) {
+        if (songList.isEmpty()) return
+        shuffleOn = false
+        playSong(songList.first(), songList)
+    }
+
+    fun renamePlaylist(playlistId: String, newName: String) {
+        playlists = playlists.map { if (it.id == playlistId) it.copy(name = newName) else it }
+        storageManager.savePlaylists(playlists)
     }
 
     fun toggleShuffle() {
@@ -682,6 +1029,31 @@ object PlaybackManager {
     }
 
     // Timers
+
+    /** Ticking countdown. Past an hour it gains an hours field: 1:05:30 rather than 65:30. */
+    private fun formatCountdown(remainingMs: Long): String {
+        val totalSec = (remainingMs / 1000).coerceAtLeast(0L)
+        val h = totalSec / 3600
+        val m = (totalSec % 3600) / 60
+        val s = totalSec % 60
+        return if (h > 0) {
+            String.format("%d:%02d:%02d", h, m, s)
+        } else {
+            String.format("%d:%02d", m, s)
+        }
+    }
+
+    /** Static label for a chosen duration, e.g. 90 -> "1 h 30 min". */
+    fun formatTimerLabel(minutes: Int): String {
+        val h = minutes / 60
+        val m = minutes % 60
+        return when {
+            h > 0 && m > 0 -> "$h h $m min"
+            h > 0 -> if (h == 1) "1 hour" else "$h hours"
+            else -> "$m min"
+        }
+    }
+
     fun startSleepTimer(minutes: Int) {
         clearSleepTimer()
         if (minutes == 0) {
@@ -692,8 +1064,8 @@ object PlaybackManager {
         }
         val durationMs = minutes * 60 * 1000L
         sleepTimerEndTime = System.currentTimeMillis() + durationMs
-        sleepTimerLabel = "$minutes min"
-        
+        sleepTimerLabel = formatTimerLabel(minutes)
+
         sleepTimerJob = coroutineScope.launch {
             while (true) {
                 val remaining = (sleepTimerEndTime ?: 0L) - System.currentTimeMillis()
@@ -702,9 +1074,7 @@ object PlaybackManager {
                     clearSleepTimer()
                     break
                 }
-                val m = remaining / 60000
-                val s = (remaining % 60000) / 1000
-                sleepTimerCountdown = String.format("%d:%02d", m, s)
+                sleepTimerCountdown = formatCountdown(remaining)
                 delay(1000)
             }
         }
@@ -723,7 +1093,7 @@ object PlaybackManager {
         clearStartTimer()
         val durationMs = minutes * 60 * 1000L
         startTimerEndTime = System.currentTimeMillis() + durationMs
-        startTimerLabel = "$minutes min"
+        startTimerLabel = formatTimerLabel(minutes)
 
         // Schedule exact alarm to trigger even when locked/asleep
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -762,9 +1132,7 @@ object PlaybackManager {
                     clearStartTimer()
                     break
                 }
-                val m = remaining / 60000
-                val s = (remaining % 60000) / 1000
-                startTimerCountdown = String.format("%d:%02d", m, s)
+                startTimerCountdown = formatCountdown(remaining)
                 delay(1000)
             }
         }
@@ -792,8 +1160,84 @@ object PlaybackManager {
         }
     }
 
-    // Media Scanning & File Picker Utils
+    /** Stable per-song accent so placeholder tiles keep their identity between scans. */
+    private fun colorForId(id: String): String =
+        ACCENT_PALETTE[Math.floorMod(id.hashCode(), ACCENT_PALETTE.size)]
+
+    /**
+     * Reads the artist/title tags directly when MediaStore has nothing useful, then
+     * falls back to splitting a "Artist - Title" filename. Untagged sideloaded files
+     * otherwise show up as an endless list of "Unknown Artist".
+     */
+    private fun enrichFromTags(song: Song): Song {
+        val needsArtist = song.artist == "Unknown Artist"
+        val needsAlbum = song.album == "Unknown Album"
+        if (!needsArtist && !needsAlbum) return song
+
+        var artist = song.artist
+        var album = song.album
+        var title = song.name
+
+        try {
+            val retriever = android.media.MediaMetadataRetriever()
+            retriever.setDataSource(context, Uri.parse(song.uri))
+            retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                ?.takeIf { it.isNotBlank() }?.let { artist = it }
+            retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                ?.takeIf { it.isNotBlank() }?.let { album = it }
+            retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE)
+                ?.takeIf { it.isNotBlank() }?.let { title = it }
+            retriever.release()
+        } catch (e: Exception) {
+            // Unreadable tags are expected on some files; fall through to the filename.
+        }
+
+        if (artist == "Unknown Artist") {
+            // "Artist - Title.mp3" is the dominant convention for downloaded files.
+            val parts = song.name.split(" - ", limit = 2)
+            if (parts.size == 2 && parts[0].isNotBlank() && parts[1].isNotBlank()) {
+                artist = parts[0].trim()
+                title = parts[1].trim()
+            }
+        }
+
+        return song.copy(name = title, artist = artist, album = album)
+    }
+
     fun scanDeviceLibrary() {
+        coroutineScope.launch {
+            val scanned = withContext(Dispatchers.IO) { querySongs().map { enrichFromTags(it) } }
+            reconcileLibrary(scanned)
+        }
+    }
+
+    /**
+     * Replaces the MediaStore-sourced part of the library wholesale, so tracks that were
+     * deleted on disk or that no longer pass the minimum-duration filter actually
+     * disappear. Manually imported files (picked_*) are untouched - they are not in the
+     * scan result and would otherwise be wiped every rescan.
+     */
+    private fun reconcileLibrary(scanned: List<Song>) {
+        val imported = songs.filter { !it.id.startsWith("ml_") }
+        val scannedIds = scanned.map { it.id }.toSet()
+        // Preserve any per-song edits the user made to tracks that still exist.
+        val previous = songs.associateBy { it.id }
+        val merged = scanned.map { fresh ->
+            val old = previous[fresh.id]
+            if (old != null) fresh.copy(color = old.color) else fresh
+        }
+
+        songs = merged + imported
+        storageManager.saveCachedSongs(songs)
+
+        currentSong?.let { playing ->
+            if (playing.id.startsWith("ml_") && playing.id !in scannedIds) {
+                stopPlayback()
+            }
+        }
+    }
+
+    private fun querySongs(): List<Song> {
         val list = mutableListOf<Song>()
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
@@ -858,13 +1302,13 @@ object PlaybackManager {
                     folder = folder,
                     mimeType = "audio/mpeg",
                     addedAt = System.currentTimeMillis(),
-                    color = ACCENT_PALETTE[Random.nextInt(ACCENT_PALETTE.size)],
+                    color = colorForId("ml_$id"),
                     albumArtUri = albumArtUri
                 ))
             }
         }
-        
-        addSongs(list)
+
+        return list
     }
 
     fun addSongs(newSongs: List<Song>) {
@@ -921,8 +1365,9 @@ object PlaybackManager {
                 e.printStackTrace()
             }
 
+            val pickedId = "picked_" + System.currentTimeMillis() + "_" + Random.nextInt(1000)
             val newSong = Song(
-                id = "picked_" + System.currentTimeMillis() + "_" + Random.nextInt(1000),
+                id = pickedId,
                 uri = uri.toString(),
                 name = name,
                 artist = artist,
@@ -932,7 +1377,7 @@ object PlaybackManager {
                 folder = "Local Files",
                 mimeType = context.contentResolver.getType(uri) ?: "audio/mpeg",
                 addedAt = System.currentTimeMillis(),
-                color = ACCENT_PALETTE[Random.nextInt(ACCENT_PALETTE.size)],
+                color = colorForId(pickedId),
                 albumArtUri = uri.toString()
             )
             addSongs(listOf(newSong))
@@ -947,15 +1392,48 @@ object PlaybackManager {
         progressJob = coroutineScope.launch {
             while (true) {
                 position = exoPlayer.currentPosition
+                applyCrossfadeGain()
                 delay(250)
             }
+        }
+    }
+
+    /**
+     * A single-player approximation of crossfade: ride the output gain down over the
+     * last few seconds of a track and back up at the start of the next one. True
+     * overlap would need a second player instance.
+     */
+    private fun applyCrossfadeGain() {
+        if (!crossfadeEnabled) return
+        try {
+            val total = exoPlayer.duration
+            if (total <= 0) return
+            val pos = exoPlayer.currentPosition
+            val remaining = total - pos
+
+            val gain = when {
+                remaining in 0..CROSSFADE_MS -> remaining.toFloat() / CROSSFADE_MS
+                pos in 0..CROSSFADE_MS -> pos.toFloat() / CROSSFADE_MS
+                else -> 1f
+            }
+            exoPlayer.volume = volume * gain.coerceIn(0.05f, 1f)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
     private fun stopProgressTracker() {
         progressJob?.cancel()
         progressJob = null
+        // Never leave the player parked at a faded-down gain.
+        try {
+            exoPlayer.volume = volume
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
+
+    private const val CROSSFADE_MS = 3000L
 
     fun updateWidgets() {
         try {

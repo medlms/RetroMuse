@@ -30,15 +30,14 @@ fun SettingsScreen() {
     val accentColorHex = PlaybackManager.accentColor
     val accentColor = Color(android.graphics.Color.parseColor(accentColorHex))
 
-    // States
-    var gapless by remember { mutableStateOf(true) }
-    var crossfade by remember { mutableStateOf(false) }
-    var bassBoost by remember { mutableStateOf(PlaybackManager.fxBass > 0) }
-    var surround by remember { mutableStateOf(false) }
-    var visualizer by remember { mutableStateOf(true) }
-    var spinningDisc by remember { mutableStateOf(true) }
-    var notification by remember { mutableStateOf(true) }
-    var lockscreen by remember { mutableStateOf(true) }
+    // Read straight from PlaybackManager, which loads and saves these through
+    // StorageManager. They used to be local remember{} state seeded with hardcoded
+    // constants, so nothing survived leaving the screen and nothing was applied.
+    val gapless = PlaybackManager.gaplessEnabled
+    val crossfade = PlaybackManager.crossfadeEnabled
+    val bassBoost = PlaybackManager.fxBass > 0
+    val surround = PlaybackManager.surroundEnabled
+    val visualizer = PlaybackManager.visualizerEnabled
 
     Column(
         modifier = Modifier
@@ -50,29 +49,21 @@ fun SettingsScreen() {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color(0xFF160D27), BgColor)
-                    )
-                )
-                .padding(horizontal = 16.dp, vertical = 20.dp)
+                .background(BgColor)
+                .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp)
         ) {
             Column {
                 Text(
-                    text = "RETROMUSE",
-                    color = RetroPink,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 1.5.sp
+                    text = "Settings",
+                    color = TextPrimaryColor,
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.8).sp
                 )
                 Text(
-                    text = "System Configuration",
-                    color = RetroCyan,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.5.sp
+                    text = "Playback, sound and appearance",
+                    color = TextMutedColor,
+                    fontSize = 13.sp
                 )
             }
         }
@@ -87,7 +78,7 @@ fun SettingsScreen() {
             rightContent = {
                 Switch(
                     checked = gapless,
-                    onCheckedChange = { gapless = it },
+                    onCheckedChange = { PlaybackManager.changeGapless(it) },
                     colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
                 )
             }
@@ -100,7 +91,7 @@ fun SettingsScreen() {
             rightContent = {
                 Switch(
                     checked = crossfade,
-                    onCheckedChange = { crossfade = it },
+                    onCheckedChange = { PlaybackManager.changeCrossfade(it) },
                     colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
                 )
             }
@@ -113,10 +104,7 @@ fun SettingsScreen() {
             rightContent = {
                 Switch(
                     checked = bassBoost,
-                    onCheckedChange = {
-                        bassBoost = it
-                        PlaybackManager.applyBassBoost(if (it) 80 else 0)
-                    },
+                    onCheckedChange = { PlaybackManager.applyBassBoost(if (it) 80 else 0) },
                     colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
                 )
             }
@@ -129,10 +117,7 @@ fun SettingsScreen() {
             rightContent = {
                 Switch(
                     checked = surround,
-                    onCheckedChange = {
-                        surround = it
-                        PlaybackManager.applyVirtualizer(it)
-                    },
+                    onCheckedChange = { PlaybackManager.changeSurround(it) },
                     colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
                 )
             }
@@ -225,20 +210,7 @@ fun SettingsScreen() {
             rightContent = {
                 Switch(
                     checked = visualizer,
-                    onCheckedChange = { visualizer = it },
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
-                )
-            }
-        )
-
-        SettingRow(
-            icon = "💿",
-            title = "Spinning Disc",
-            subtitle = "Rotate artwork while playing",
-            rightContent = {
-                Switch(
-                    checked = spinningDisc,
-                    onCheckedChange = { spinningDisc = it },
+                    onCheckedChange = { PlaybackManager.changeVisualizerEnabled(it) },
                     colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
                 )
             }
@@ -281,31 +253,28 @@ fun SettingsScreen() {
         // Section Notifications
         SectionTitle(title = "Notification & Lock Screen", accentColor = accentColor)
 
-        SettingRow(
-            icon = "🔔",
-            title = "Media Notification",
-            subtitle = "Show controls in notification bar",
-            rightContent = {
-                Switch(
-                    checked = notification,
-                    onCheckedChange = { notification = it },
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
-                )
+        // Background playback requires a foreground-service notification, and the lock
+        // screen player is that same notification - neither can be switched off from
+        // inside the app, so send the user to the setting that actually governs it.
+        Box(modifier = Modifier.clickable {
+            try {
+                val intent = android.content.Intent(
+                    android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                ).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                Toast.makeText(context, "Couldn't open notification settings.", Toast.LENGTH_SHORT).show()
             }
-        )
-
-        SettingRow(
-            icon = "🔒",
-            title = "Lock Screen Controls",
-            subtitle = "Control playback from lock screen",
-            rightContent = {
-                Switch(
-                    checked = lockscreen,
-                    onCheckedChange = { lockscreen = it },
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
-                )
-            }
-        )
+        }) {
+            SettingRow(
+                icon = "🔔",
+                title = "Notification & Lock Screen",
+                subtitle = "Manage the media player shown outside the app",
+                rightContent = {
+                    Text("›", color = TextMutedColor, fontSize = 22.sp)
+                }
+            )
+        }
 
         // Storage & Library
         SectionTitle(title = "Storage & Library", accentColor = accentColor)
@@ -394,14 +363,14 @@ fun SettingsScreen() {
 fun SectionTitle(title: String, accentColor: Color) {
     Text(
         text = title.uppercase(),
-        color = accentColor,
+        color = TextMutedColor,
         fontSize = 11.sp,
-        fontWeight = FontWeight.ExtraBold,
-        letterSpacing = 1.3.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 1.2.sp,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .padding(top = 20.dp, bottom = 6.dp)
+            .padding(horizontal = 20.dp)
+            .padding(top = 26.dp, bottom = 8.dp)
     )
 }
 
@@ -415,14 +384,22 @@ fun SettingRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text(icon, fontSize = 22.sp, modifier = Modifier.width(32.dp))
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(BgSunkenColor),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(icon, fontSize = 17.sp)
+        }
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = TextPrimaryColor, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Text(subtitle, color = TextSecondaryColor, fontSize = 12.sp, modifier = Modifier.padding(top = 1.dp))
+            Text(title, color = TextPrimaryColor, fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = TextMutedColor, fontSize = 12.5.sp, modifier = Modifier.padding(top = 1.dp))
         }
         if (rightContent != null) {
             rightContent()

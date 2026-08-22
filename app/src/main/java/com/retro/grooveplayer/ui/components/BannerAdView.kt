@@ -7,22 +7,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
+import com.retro.grooveplayer.ui.theme.BgColor
 
 @Composable
 fun BannerAdView(
     modifier: Modifier = Modifier,
-    adUnitId: String = "ca-app-pub-3940256099942544/6300978111" // Google Official Banner Ad Test Unit ID
+    // Set admobBannerUnitId in keystore.properties to ship real ads; defaults to
+    // Google's official test unit so debug builds never serve live inventory.
+    adUnitId: String = com.retro.grooveplayer.BuildConfig.ADMOB_BANNER_UNIT_ID
 ) {
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color(0xFF0F081D)),
+            .background(BgColor),
         contentAlignment = Alignment.Center
     ) {
         AndroidView(

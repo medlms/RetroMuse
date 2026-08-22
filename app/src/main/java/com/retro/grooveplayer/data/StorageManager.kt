@@ -51,7 +51,17 @@ class StorageManager(context: Context) {
     }
 
     fun getAccentColor(): String {
-        return prefs.getString("accent_color", "#a855f7") ?: "#a855f7"
+        return prefs.getString("accent_color", "#7C4DFF") ?: "#7C4DFF"
+    }
+
+    /**
+     * One-shot migration to the redesigned theme: existing installs carry an accent and
+     * theme mode from the old palette, so move them onto the new light-first defaults once.
+     */
+    fun needsThemeMigration(): Boolean = !prefs.getBoolean("theme_v2_migrated", false)
+
+    fun markThemeMigrated() {
+        prefs.edit().putBoolean("theme_v2_migrated", true).apply()
     }
 
     fun saveAccentColor(colorHex: String) {
@@ -72,6 +82,32 @@ class StorageManager(context: Context) {
 
     fun saveSpeed(speed: Float) {
         prefs.edit().putFloat("speed", speed).apply()
+    }
+
+    fun getPitch(): Int = prefs.getInt("pitch", 0)
+    fun savePitch(value: Int) = prefs.edit().putInt("pitch", value).apply()
+
+    fun getReverb(): Int = prefs.getInt("reverb", 0)
+    fun saveReverb(value: Int) = prefs.edit().putInt("reverb", value).apply()
+
+    fun getBassLevel(): Int = prefs.getInt("bass_level", 0)
+    fun saveBassLevel(value: Int) = prefs.edit().putInt("bass_level", value).apply()
+
+    fun getSortBy(): String = prefs.getString("sort_by", "Title") ?: "Title"
+    fun saveSortBy(value: String) = prefs.edit().putString("sort_by", value).apply()
+
+    fun getCustomEqBands(): List<Int> {
+        val json = prefs.getString("custom_eq_bands", null) ?: return List(10) { 0 }
+        return try {
+            val type = object : TypeToken<List<Int>>() {}.type
+            gson.fromJson<List<Int>>(json, type) ?: List(10) { 0 }
+        } catch (e: Exception) {
+            List(10) { 0 }
+        }
+    }
+
+    fun saveCustomEqBands(bands: List<Int>) {
+        prefs.edit().putString("custom_eq_bands", gson.toJson(bands)).apply()
     }
 
     fun getGapless(): Boolean = prefs.getBoolean("gapless", true)
@@ -134,8 +170,22 @@ class StorageManager(context: Context) {
         prefs.edit().putInt("min_duration", seconds).apply()
     }
 
+    /** Session count, used to hold ads and the review prompt back on early launches. */
+    fun getSessionCount(): Int = prefs.getInt("session_count", 0)
+    fun incrementSessionCount(): Int {
+        val next = getSessionCount() + 1
+        prefs.edit().putInt("session_count", next).apply()
+        return next
+    }
+
+    fun hasRequestedReview(): Boolean = prefs.getBoolean("review_requested", false)
+    fun markReviewRequested() = prefs.edit().putBoolean("review_requested", true).apply()
+
+    fun getVocalMode(): String = prefs.getString("vocal_mode", "OFF") ?: "OFF"
+    fun saveVocalMode(mode: String) = prefs.edit().putString("vocal_mode", mode).apply()
+
     fun getThemeMode(): String {
-        return prefs.getString("theme_mode", "system") ?: "system"
+        return prefs.getString("theme_mode", "light") ?: "light"
     }
 
     fun saveThemeMode(mode: String) {

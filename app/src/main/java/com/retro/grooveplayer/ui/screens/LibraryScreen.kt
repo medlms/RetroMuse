@@ -9,7 +9,14 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -48,7 +55,8 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
 
     var activeTab by remember { mutableStateOf("Songs") }
     var searchQuery by remember { mutableStateOf("") }
-    var sortBy by remember { mutableStateOf("Title") }
+    // Persisted, so the chosen order survives a restart.
+    val sortBy = PlaybackManager.sortBy
 
     var showSearch by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
@@ -58,6 +66,8 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
     // Playlists
     var showNewPlaylistDialog by remember { mutableStateOf(false) }
     var newPlaylistName by remember { mutableStateOf("") }
+    var renamingPlaylist by remember { mutableStateOf<Playlist?>(null) }
+    var renamePlaylistText by remember { mutableStateOf("") }
     var showAddToPlaylistModal by remember { mutableStateOf(false) }
 
     // Activity result launchers
@@ -78,6 +88,32 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
             Toast.makeText(context, "Scanning storage...", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(context, "Storage permission denied.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Android 11+ requires per-file consent to modify a track this app doesn't own.
+    val writeRequestLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            PlaybackManager.retryPendingWrite()
+            Toast.makeText(context, "Tags saved to file", Toast.LENGTH_SHORT).show()
+        } else {
+            PlaybackManager.pendingWriteRequest = null
+            Toast.makeText(context, "Permission denied - file not changed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    LaunchedEffect(PlaybackManager.pendingWriteRequest) {
+        PlaybackManager.pendingWriteRequest?.let { pending ->
+            try {
+                writeRequestLauncher.launch(
+                    androidx.activity.result.IntentSenderRequest.Builder(pending.intentSender).build()
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+                PlaybackManager.pendingWriteRequest = null
+            }
         }
     }
 
@@ -140,46 +176,48 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color(0xFF160D27), BgColor)
-                    )
-                )
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .background(BgColor)
+                .padding(start = 20.dp, end = 12.dp, top = 8.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "RETROMUSE",
-                            color = RetroPink,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 26.sp,
-                            fontWeight = FontWeight.Black,
-                            letterSpacing = 1.5.sp
+                            text = "Library",
+                            color = TextPrimaryColor,
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = (-0.8).sp
                         )
                         Text(
-                            text = "Audio Workspace",
-                            color = RetroCyan,
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.5.sp
+                            text = "${PlaybackManager.songs.size} tracks",
+                            color = TextMutedColor,
+                            fontSize = 13.sp
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         // Search trigger
                         IconButton(onClick = { showSearch = !showSearch }) {
-                            Text("🔍", fontSize = 20.sp)
+                            Icon(
+                                Icons.Filled.Search,
+                                contentDescription = "Search",
+                                tint = if (showSearch) accentColor else TextSecondaryColor,
+                                modifier = Modifier.size(23.dp)
+                            )
                         }
                         // Sort trigger
                         Box {
                             IconButton(onClick = { showSortMenu = true }) {
-                                Text("⬇️", fontSize = 20.sp)
+                                Icon(
+                                    Icons.Filled.SwapVert,
+                                    contentDescription = "Sort",
+                                    tint = TextSecondaryColor,
+                                    modifier = Modifier.size(23.dp)
+                                )
                             }
                             DropdownMenu(
                                 expanded = showSortMenu,
@@ -190,7 +228,7 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
                                     DropdownMenuItem(
                                         text = { Text(opt, color = TextPrimaryColor) },
                                         onClick = {
-                                            sortBy = opt
+                                            PlaybackManager.changeSortBy(opt)
                                             showSortMenu = false
                                         }
                                     )
@@ -205,44 +243,57 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
-                        placeholder = { Text("Search songs, artists, albums…", color = TextMutedColor, fontSize = 13.sp) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 8.dp, top = 8.dp)
+                            .height(52.dp),
+                        placeholder = { Text("Search songs, artists, albums", color = TextMutedColor, fontSize = 14.sp) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Search,
+                                contentDescription = null,
+                                tint = TextMutedColor,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        },
+                        singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = TextPrimaryColor,
                             unfocusedTextColor = TextPrimaryColor,
-                            focusedBorderColor = accentColor,
-                            unfocusedBorderColor = BorderColor,
-                            focusedContainerColor = BgCardColor,
-                            unfocusedContainerColor = BgCardColor
+                            focusedBorderColor = Color.Transparent,
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedContainerColor = BgSunkenColor,
+                            unfocusedContainerColor = BgSunkenColor,
+                            cursorColor = accentColor
                         ),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(14.dp)
                     )
                 }
 
-
-
-                // Tabs row
-                ScrollableTabRow(
-                    selectedTabIndex = TABS.indexOf(activeTab),
-                    containerColor = Color.Transparent,
-                    contentColor = accentColor,
-                    edgePadding = 0.dp,
-                    indicator = { tabPositions ->
-                        TabRowDefaults.Indicator(
-                            Modifier.tabIndicatorOffset(tabPositions[TABS.indexOf(activeTab)]),
-                            color = accentColor
-                        )
-                    },
-                    divider = {}
+                // Tabs: pill segmented control rather than an underline row.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(top = 10.dp, bottom = 8.dp, end = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     TABS.forEach { tab ->
-                        Tab(
-                            selected = activeTab == tab,
-                            onClick = { activeTab = tab },
-                            text = { Text(tab, fontWeight = FontWeight.Bold, fontSize = 14.sp) },
-                            selectedContentColor = accentColor,
-                            unselectedContentColor = TextSecondaryColor
-                        )
+                        val selected = activeTab == tab
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(99.dp))
+                                .background(if (selected) accentColor else BgSunkenColor)
+                                .clickable { activeTab = tab }
+                                .padding(horizontal = 16.dp, vertical = 9.dp)
+                        ) {
+                            Text(
+                                text = tab,
+                                color = if (selected) Color.White else TextSecondaryColor,
+                                fontSize = 13.sp,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                            )
+                        }
                     }
                 }
             }
@@ -261,6 +312,64 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
                                 EmptyState("🎶", "No songs yet. Pick files or scan library.")
                             }
                         } else {
+                            item {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 22.dp)
+                                        .padding(top = 4.dp, bottom = 10.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(99.dp))
+                                            .background(accentColor)
+                                            .clickable { PlaybackManager.playAll(sortedSongs); onSongSelect() }
+                                            .padding(vertical = 12.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.PlayArrow,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(19.dp)
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            "Play all",
+                                            color = Color.White,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                    Row(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(99.dp))
+                                            .background(BgSunkenColor)
+                                            .clickable { PlaybackManager.shuffleAll(sortedSongs); onSongSelect() }
+                                            .padding(vertical = 12.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Shuffle,
+                                            contentDescription = null,
+                                            tint = TextPrimaryColor,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            "Shuffle",
+                                            color = TextPrimaryColor,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            }
                             items(sortedSongs, key = { it.id }) { song ->
                                 SongItem(
                                     song = song,
@@ -533,6 +642,12 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
                                                 fontSize = 12.sp
                                             )
                                         }
+                                        IconButton(onClick = {
+                                            renamingPlaylist = pl
+                                            renamePlaylistText = pl.name
+                                        }) {
+                                            Text("✏️", fontSize = 15.sp)
+                                        }
                                         IconButton(onClick = { PlaybackManager.removePlaylist(pl.id) }) {
                                             Text("🗑️", fontSize = 16.sp)
                                         }
@@ -633,6 +748,34 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
                             color = TextPrimaryColor,
                             fontSize = 16.sp
                         )
+                    }
+                }
+
+                // Play Next
+                TextButton(
+                    onClick = {
+                        PlaybackManager.playNext(song)
+                        contextSong = null
+                        Toast.makeText(context, "Playing next", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                        Text("⏭  Play Next", color = TextPrimaryColor, fontSize = 16.sp)
+                    }
+                }
+
+                // Add to Queue
+                TextButton(
+                    onClick = {
+                        PlaybackManager.addToQueue(song)
+                        contextSong = null
+                        Toast.makeText(context, "Added to queue", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                        Text("➕  Add to Queue", color = TextPrimaryColor, fontSize = 16.sp)
                     }
                 }
 
@@ -763,6 +906,43 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
         )
     }
 
+    // Rename Playlist Dialog
+    renamingPlaylist?.let { pl ->
+        AlertDialog(
+            onDismissRequest = { renamingPlaylist = null },
+            containerColor = BgModalColor,
+            title = { Text("Rename Playlist", color = TextPrimaryColor, fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = renamePlaylistText,
+                    onValueChange = { renamePlaylistText = it },
+                    singleLine = true,
+                    label = { Text("Name", color = TextMutedColor) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextPrimaryColor,
+                        unfocusedTextColor = TextPrimaryColor,
+                        focusedBorderColor = accentColor,
+                        unfocusedBorderColor = BorderColor
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val name = renamePlaylistText.trim()
+                    if (name.isNotEmpty()) PlaybackManager.renamePlaylist(pl.id, name)
+                    renamingPlaylist = null
+                }) {
+                    Text("Save", color = accentColor, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingPlaylist = null }) {
+                    Text("Cancel", color = TextSecondaryColor)
+                }
+            }
+        )
+    }
+
     // Edit Tag Metadata Dialog
     if (showEditTagDialog && contextSong != null) {
         val song = contextSong!!
@@ -814,7 +994,7 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
             confirmButton = {
                 TextButton(
                     onClick = {
-                        PlaybackManager.updateSongMetadata(
+                        val wrote = PlaybackManager.updateSongMetadata(
                             song.id,
                             titleText.trim(),
                             artistText.trim(),
@@ -822,7 +1002,16 @@ fun LibraryScreen(onSongSelect: () -> Unit) {
                         )
                         showEditTagDialog = false
                         contextSong = null
-                        Toast.makeText(context, "Metadata Updated!", Toast.LENGTH_SHORT).show()
+                        if (wrote) {
+                            Toast.makeText(context, "Tags saved to file", Toast.LENGTH_SHORT).show()
+                        } else if (PlaybackManager.pendingWriteRequest == null) {
+                            // Nothing to consent to, so the file itself can't be written.
+                            Toast.makeText(
+                                context,
+                                "Updated in RetroMuse only - the file couldn't be modified",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
                     }
                 ) {
                     Text("Save Changes", color = accentColor, fontWeight = FontWeight.Bold)

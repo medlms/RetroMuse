@@ -4,6 +4,11 @@
 **/build/
 .gradle/
 local.properties
+
+# Signing material and ad unit IDs - never commit these
+keystore.properties
+*.jks
+*.keystore
 .idea/
 *.iml
 .DS_Store

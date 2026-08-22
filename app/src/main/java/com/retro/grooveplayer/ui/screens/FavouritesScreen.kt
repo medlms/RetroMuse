@@ -29,33 +29,24 @@ fun FavouritesScreen(onSongSelect: () -> Unit) {
             .fillMaxSize()
             .background(BgColor)
     ) {
-        // Header with gradient background
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color(0xFF160D27), BgColor)
-                    )
-                )
-                .padding(horizontal = 16.dp, vertical = 20.dp)
+                .background(BgColor)
+                .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 10.dp)
         ) {
             Column {
                 Text(
-                    text = "RETROMUSE",
-                    color = RetroPink,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 1.5.sp
+                    text = "Favourites",
+                    color = TextPrimaryColor,
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.8).sp
                 )
                 Text(
-                    text = "Favourites Library • ${favSongs.size} songs",
-                    color = RetroCyan,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.5.sp
+                    text = if (favSongs.size == 1) "1 track" else "${favSongs.size} tracks",
+                    color = TextMutedColor,
+                    fontSize = 13.sp
                 )
             }
         }

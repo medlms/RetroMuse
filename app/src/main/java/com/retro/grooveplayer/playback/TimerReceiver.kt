@@ -8,21 +8,18 @@ import android.os.PowerManager
 
 class TimerReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        // Acquire a temporary WakeLock to keep the CPU awake
         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         val wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RetroMuse::TimerWakeLock")
         try {
-            wakeLock.acquire(10000) // Keep CPU awake for 10 seconds
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+            wakeLock.acquire(10_000L)
 
-        // Start PlaybackService with ACTION_AUTO_START
-        val serviceIntent = Intent(context, PlaybackService::class.java).apply {
-            action = "ACTION_AUTO_START"
-        }
-        
-        try {
+            // The alarm routinely fires into a cold process, where the library has
+            // never been loaded and playFirstSong() would find an empty list.
+            PlaybackManager.ensureInitialised(context)
+
+            val serviceIntent = Intent(context, PlaybackService::class.java).apply {
+                action = "ACTION_AUTO_START"
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(serviceIntent)
             } else {
@@ -30,6 +27,12 @@ class TimerReceiver : BroadcastReceiver() {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        } finally {
+            try {
+                if (wakeLock.isHeld) wakeLock.release()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 }

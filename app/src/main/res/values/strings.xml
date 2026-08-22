@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">RetroMuse Music Player</string>
+    <!-- Launcher label. The Play Store title is set separately in Play Console; keep
+         the two aligned around the differentiating features, not the generic category. -->
+    <string name="app_name">RetroMuse</string>
+    <string name="store_title">RetroMuse: Vocal Remover &amp; Slowed Reverb</string>
+    <string name="store_short_description">Remove vocals, make slowed + reverb and 8D edits, and share them.</string>
 </resources>
