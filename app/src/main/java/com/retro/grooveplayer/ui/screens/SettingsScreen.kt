@@ -22,7 +22,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.retro.grooveplayer.playback.PlaybackManager
-import com.retro.grooveplayer.ui.theme.*
+import com.retro.grooveplayer.dsp.RackSettings
+import com.retro.grooveplayer.ui.theme.BgColor
+import com.retro.grooveplayer.ui.theme.BgSunkenColor
+import com.retro.grooveplayer.ui.theme.BorderColor
+import com.retro.grooveplayer.ui.theme.TextPrimaryColor
+import com.retro.grooveplayer.ui.theme.TextSecondaryColor
+import com.retro.grooveplayer.ui.theme.TextMutedColor
+import com.retro.grooveplayer.ui.theme.DangerColor
+import com.retro.grooveplayer.ui.theme.WarningColor
+import com.retro.grooveplayer.ui.theme.SuccessColor
+import com.retro.grooveplayer.ui.theme.RetroPink
+import com.retro.grooveplayer.ui.theme.RetroCyan
+import com.retro.grooveplayer.ui.theme.ShadowColor
 
 @Composable
 fun SettingsScreen() {
@@ -118,6 +130,22 @@ fun SettingsScreen() {
                 Switch(
                     checked = surround,
                     onCheckedChange = { PlaybackManager.changeSurround(it) },
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
+                )
+            }
+        )
+
+        SettingRow(
+            icon = "🛡️",
+            title = "Master Limiter",
+            subtitle = "Prevent clipping in custom DSP effect rack",
+            rightContent = {
+                Switch(
+                    checked = RackSettings.limiterEnabled,
+                    onCheckedChange = {
+                        RackSettings.limiterEnabled = it
+                        RackSettings.touch()
+                    },
                     colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
                 )
             }
@@ -279,23 +307,18 @@ fun SettingsScreen() {
         // Storage & Library
         SectionTitle(title = "Storage & Library", accentColor = accentColor)
         
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable {
-                    PlaybackManager.scanDeviceLibrary()
-                    Toast.makeText(context, "Scanning storage for audio files...", Toast.LENGTH_SHORT).show()
+        Box(modifier = Modifier.clickable {
+            PlaybackManager.scanDeviceLibrary()
+            Toast.makeText(context, "Scanning storage for audio files...", Toast.LENGTH_SHORT).show()
+        }) {
+            SettingRow(
+                icon = "🔄",
+                title = "Scan Media Library",
+                subtitle = "Scan storage folders for newly added songs",
+                rightContent = {
+                    Text("›", color = TextMutedColor, fontSize = 22.sp)
                 }
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Text("🔄", fontSize = 22.sp, modifier = Modifier.width(32.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Scan Media Library", color = TextPrimaryColor, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Text("Scan storage folders for newly added songs", color = TextSecondaryColor, fontSize = 12.sp)
-            }
-            Text("›", color = TextMutedColor, fontSize = 20.sp)
+            )
         }
 
         SettingRow(
@@ -333,29 +356,41 @@ fun SettingsScreen() {
             }
         )
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable {
-                    PlaybackManager.clearLibrary()
-                    Toast.makeText(context, "Library Cleared", Toast.LENGTH_SHORT).show()
+        Box(modifier = Modifier.clickable {
+            Toast.makeText(
+                context,
+                "All exported tracks are saved in the 'Music/RetroMuse' folder of your device storage.",
+                Toast.LENGTH_LONG
+            ).show()
+        }) {
+            SettingRow(
+                icon = "📂",
+                title = "Export Destination",
+                subtitle = "Music/RetroMuse",
+                rightContent = {
+                    Text("›", color = TextMutedColor, fontSize = 22.sp)
                 }
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Text("🗑️", fontSize = 22.sp, modifier = Modifier.width(32.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Clear Library", color = TextPrimaryColor, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Text("Reset audio list and clear cache", color = TextSecondaryColor, fontSize = 12.sp)
-            }
-            Text("›", color = TextMutedColor, fontSize = 20.sp)
+            )
+        }
+
+        Box(modifier = Modifier.clickable {
+            PlaybackManager.clearLibrary()
+            Toast.makeText(context, "Library Cleared", Toast.LENGTH_SHORT).show()
+        }) {
+            SettingRow(
+                icon = "🗑️",
+                title = "Clear Library",
+                subtitle = "Reset audio list and clear cache",
+                rightContent = {
+                    Text("›", color = TextMutedColor, fontSize = 22.sp)
+                }
+            )
         }
 
         // About
         SectionTitle(title = "About", accentColor = accentColor)
-        SettingRow("🎵", "RetroMuse Music Player", "Version 1.0.0 – Built with Jetpack Compose", null)
-        SettingRow("💜", "Made with", "Kotlin + Jetpack Media3 ExoPlayer", null)
+        SettingRow("🎵", "RetroMuse Music Player", "Version ${com.retro.grooveplayer.BuildConfig.VERSION_NAME} – Sideload & Edit Pro", null)
+        SettingRow("💜", "DSP Engine", "Custom C++ Real-time Effect Rack", null)
     }
 }
 
