@@ -19,14 +19,14 @@ fun adUnit(key: String, testDefault: String): String =
 
 android {
     namespace = "com.retro.grooveplayer"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.retro.retromuse"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 12
-        versionName = "1.0.11"
+        targetSdk = 36
+        versionCode = 13
+        versionName = "1.0.12"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
