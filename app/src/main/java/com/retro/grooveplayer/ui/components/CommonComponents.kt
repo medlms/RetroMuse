@@ -19,6 +19,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -99,12 +101,21 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * Album art for a track.
+ *
+ * [songUri] is what actually matters: cover art is read from the file's own tags via
+ * the registered Coil fetcher, with MediaStore's album-art entry only as a fallback.
+ * Passing artwork alone left most of the library showing placeholders, because
+ * MediaStore has no art for sideloaded files.
+ */
 @Composable
 fun ArtworkImage(
     artworkUri: String?,
     songColorHex: String,
     modifier: Modifier = Modifier,
-    iconSizeSp: Int = 22
+    iconSizeSp: Int = 22,
+    songUri: String? = null
 ) {
     val context = LocalContext.current
     val songBaseColor = try {
@@ -133,13 +144,19 @@ fun ArtworkImage(
             modifier = Modifier.size((iconSizeSp * 1.1f).dp)
         )
 
-        if (!artworkUri.isNullOrBlank()) {
+        val model = when {
+            songUri != null -> com.retro.grooveplayer.data.AudioCover(songUri, artworkUri)
+            !artworkUri.isNullOrBlank() -> artworkUri
+            else -> null
+        }
+
+        if (model != null) {
             AsyncImage(
                 model = ImageRequest.Builder(context)
-                    .data(artworkUri)
+                    .data(model)
                     .crossfade(true)
                     .build(),
-                contentDescription = "Album artwork",
+                contentDescription = null, // The row already announces the track.
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
@@ -188,6 +205,17 @@ fun SongItem(
     val isFav = PlaybackManager.favourites.contains(song.id)
     val accentColor = accent
 
+    // Announced as one item: title, artist, duration and playing state together.
+    val rowDescription = buildString {
+        append(song.name)
+        append(", ")
+        append(song.artist)
+        append(", ")
+        append(formatTime(song.duration))
+        if (isCurrent) append(if (isPlaying) ", now playing" else ", paused")
+        if (showFav && isFav) append(", favourite")
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -196,8 +224,11 @@ fun SongItem(
             .background(if (isCurrent) accentColor.copy(alpha = 0.09f) else Color.Transparent)
             .combinedClickable(
                 onClick = onPress,
-                onLongClick = onLongPress
+                onLongClick = onLongPress,
+                onClickLabel = "Play ${song.name}",
+                onLongClickLabel = "Track options"
             )
+            .semantics(mergeDescendants = true) { contentDescription = rowDescription }
             .padding(horizontal = 10.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -211,6 +242,7 @@ fun SongItem(
         ) {
             ArtworkImage(
                 artworkUri = song.albumArtUri,
+                songUri = song.uri,
                 songColorHex = song.color,
                 modifier = Modifier.fillMaxSize(),
                 iconSizeSp = 20
@@ -354,3 +386,4 @@ fun BottomModal(
         }
     }
 }
+

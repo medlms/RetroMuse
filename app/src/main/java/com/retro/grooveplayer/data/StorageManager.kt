@@ -181,11 +181,84 @@ class StorageManager(context: Context) {
     fun hasRequestedReview(): Boolean = prefs.getBoolean("review_requested", false)
     fun markReviewRequested() = prefs.edit().putBoolean("review_requested", true).apply()
 
+    // --- Resume playback -------------------------------------------------------
+
+    /** Last played track and position, so closing the app does not lose your place. */
+    fun getResumeSongId(): String? = prefs.getString("resume_song_id", null)
+    fun getResumePosition(): Long = prefs.getLong("resume_position", 0L)
+
+    fun saveResume(songId: String?, positionMs: Long) {
+        prefs.edit()
+            .putString("resume_song_id", songId)
+            .putLong("resume_position", positionMs)
+            .apply()
+    }
+
+    /** Wall-clock time the start timer should fire; 0 when none is pending. */
+    fun getStartTimer(): Long = prefs.getLong("start_timer_at", 0L)
+    fun saveStartTimer(atMillis: Long) =
+        prefs.edit().putLong("start_timer_at", atMillis).apply()
+
+    // --- Studio rack -----------------------------------------------------------
+
+    /** Whether rack settings are remembered separately for each track. */
+    fun getPerSongRack(): Boolean = prefs.getBoolean("per_song_rack", false)
+    fun savePerSongRack(value: Boolean) =
+        prefs.edit().putBoolean("per_song_rack", value).apply()
+
+    fun getSongRacks(): Map<String, Map<String, String>> {
+        val json = prefs.getString("song_racks", null) ?: return emptyMap()
+        return try {
+            val type = object : TypeToken<Map<String, Map<String, String>>>() {}.type
+            gson.fromJson(json, type) ?: emptyMap()
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
+    fun saveSongRacks(racks: Map<String, Map<String, String>>) {
+        prefs.edit().putString("song_racks", gson.toJson(racks)).apply()
+    }
+
+    /** The live rack state, so a session's editing survives the app being killed. */
+    fun getRackState(): Map<String, String> {
+        val json = prefs.getString("rack_state", null) ?: return emptyMap()
+        return try {
+            val type = object : TypeToken<Map<String, String>>() {}.type
+            gson.fromJson(json, type) ?: emptyMap()
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
+    fun saveRackState(state: Map<String, String>) {
+        prefs.edit().putString("rack_state", gson.toJson(state)).apply()
+    }
+
+    /** Named chains the user saved themselves. */
+    fun getUserPresets(): List<RackPreset> {
+        val json = prefs.getString("rack_presets", null) ?: return emptyList()
+        return try {
+            val type = object : TypeToken<List<RackPreset>>() {}.type
+            gson.fromJson(json, type) ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveUserPresets(presets: List<RackPreset>) {
+        prefs.edit().putString("rack_presets", gson.toJson(presets)).apply()
+    }
+
     fun getVocalMode(): String = prefs.getString("vocal_mode", "OFF") ?: "OFF"
     fun saveVocalMode(mode: String) = prefs.edit().putString("vocal_mode", mode).apply()
 
+    fun getUseThemeAccent(): Boolean = prefs.getBoolean("use_theme_accent", true)
+    fun saveUseThemeAccent(value: Boolean) =
+        prefs.edit().putBoolean("use_theme_accent", value).apply()
+
     fun getThemeMode(): String {
-        return prefs.getString("theme_mode", "light") ?: "light"
+        return prefs.getString("theme_mode", "daylight") ?: "daylight"
     }
 
     fun saveThemeMode(mode: String) {

@@ -17,6 +17,38 @@ interface AudioEffect {
     fun reset()
 }
 
+/**
+ * Which part of the stereo image a unit acts on. Mid-only leaves the sides untouched
+ * (useful for shaping a centred vocal); side-only leaves the centre alone.
+ */
+enum class StereoMode { STEREO, MID, SIDE }
+
+/**
+ * Runs [block] on just the mid or side component, then recombines. Lets any stereo
+ * effect become an M/S effect without rewriting it.
+ */
+inline fun AudioFrame.inStereoMode(mode: StereoMode, block: (AudioFrame) -> Unit) {
+    if (mode == StereoMode.STEREO) {
+        block(this)
+        return
+    }
+    val mid = (l + r) * 0.5f
+    val side = (l - r) * 0.5f
+    if (mode == StereoMode.MID) {
+        l = mid; r = mid
+        block(this)
+        val processed = (l + r) * 0.5f
+        l = processed + side
+        r = processed - side
+    } else {
+        l = side; r = side
+        block(this)
+        val processed = (l + r) * 0.5f
+        l = mid + processed
+        r = mid - processed
+    }
+}
+
 // --------------------------------------------------------------------------------
 // Spectral / frequency
 // --------------------------------------------------------------------------------
@@ -30,6 +62,8 @@ interface AudioEffect {
  */
 class ParametricEq(private val bandCount: Int = 5) : AudioEffect {
     override var enabled = false
+
+    @Volatile var stereoMode = StereoMode.STEREO
 
     class Band(
         @Volatile var freq: Float,
@@ -71,21 +105,23 @@ class ParametricEq(private val bandCount: Int = 5) : AudioEffect {
 
     override fun process(frame: AudioFrame) {
         if (dirty) rebuild()
-        for (i in 0 until bandCount) {
-            val b = bands[i]
-            if (b.gainDb == 0f) continue
-            if (b.dynamic) {
-                // Detect energy in this band only, then scale the applied gain by how
-                // far it exceeds the threshold.
-                val probe = detectors[i].processLeft(frame.l)
-                val env = followers[i].process(probe)
-                val envDb = Db.fromGain(env)
-                val amount = ((envDb - b.thresholdDb) / 12f).coerceIn(0f, 1f)
-                if (amount <= 0f) continue
-                filters[i].setPeaking(b.freq, b.q, b.gainDb * amount, sampleRate)
+        frame.inStereoMode(stereoMode) { f ->
+            for (i in 0 until bandCount) {
+                val b = bands[i]
+                if (b.gainDb == 0f) continue
+                if (b.dynamic) {
+                    // Detect energy in this band only, then scale the applied gain by
+                    // how far it exceeds the threshold.
+                    val probe = detectors[i].processLeft(f.l)
+                    val env = followers[i].process(probe)
+                    val envDb = Db.fromGain(env)
+                    val amount = ((envDb - b.thresholdDb) / 12f).coerceIn(0f, 1f)
+                    if (amount <= 0f) continue
+                    filters[i].setPeaking(b.freq, b.q, b.gainDb * amount, sampleRate)
+                }
+                f.l = filters[i].processLeft(f.l)
+                f.r = filters[i].processRight(f.r)
             }
-            frame.l = filters[i].processLeft(frame.l)
-            frame.r = filters[i].processRight(frame.r)
         }
     }
 
@@ -184,12 +220,20 @@ class MultibandCompressor : AudioEffect {
     private val envMid = EnvelopeFollower(8f, 120f)
     private val envHigh = EnvelopeFollower(4f, 80f)
 
+    /** Per-band gain reduction, normalised 0..1, for the UI meters. */
+    val reductionLow = Meter()
+    val reductionMid = Meter()
+    val reductionHigh = Meter()
+
     override fun prepare(sampleRate: Int) {
         splitLow.setFrequency(lowCrossover, sampleRate)
         splitHigh.setFrequency(highCrossover, sampleRate)
         envLow.prepare(sampleRate)
         envMid.prepare(sampleRate)
         envHigh.prepare(sampleRate)
+        reductionLow.prepare(sampleRate)
+        reductionMid.prepare(sampleRate)
+        reductionHigh.prepare(sampleRate)
     }
 
     private fun compress(
@@ -219,15 +263,17 @@ class MultibandCompressor : AudioEffect {
         val highDetector = max(abs(highL), abs(highR))
 
         // Each band shares one detector so the stereo image is not pulled apart.
-        val lowGain = Db.toGain(
-            GainComputer.gainDb(Db.fromGain(envLow.process(lowDetector)), low.thresholdDb, low.ratio, 6f) + low.makeupDb
-        )
-        val midGain = Db.toGain(
-            GainComputer.gainDb(Db.fromGain(envMid.process(midDetector)), mid.thresholdDb, mid.ratio, 6f) + mid.makeupDb
-        )
-        val highGain = Db.toGain(
-            GainComputer.gainDb(Db.fromGain(envHigh.process(highDetector)), high.thresholdDb, high.ratio, 6f) + high.makeupDb
-        )
+        val lowDb = GainComputer.gainDb(Db.fromGain(envLow.process(lowDetector)), low.thresholdDb, low.ratio, 6f)
+        val midDb = GainComputer.gainDb(Db.fromGain(envMid.process(midDetector)), mid.thresholdDb, mid.ratio, 6f)
+        val highDb = GainComputer.gainDb(Db.fromGain(envHigh.process(highDetector)), high.thresholdDb, high.ratio, 6f)
+
+        reductionLow.update(-lowDb / 24f)
+        reductionMid.update(-midDb / 24f)
+        reductionHigh.update(-highDb / 24f)
+
+        val lowGain = Db.toGain(lowDb + low.makeupDb)
+        val midGain = Db.toGain(midDb + mid.makeupDb)
+        val highGain = Db.toGain(highDb + high.makeupDb)
 
         frame.l = lowL * lowGain + midL * midGain + highL * highGain
         frame.r = lowR * lowGain + midR * midGain + highR * highGain
@@ -260,6 +306,10 @@ class BrickwallLimiter : AudioEffect {
     private var gain = 1f
     private var releaseCoeff = 0.999f
 
+    /** How hard the limiter is working, 0..1, and the post-limiter output level. */
+    val reduction = Meter()
+    val outputLevel = Meter()
+
     override fun prepare(sampleRate: Int) {
         lookaheadSamples = (sampleRate * 0.0015f).toInt().coerceAtLeast(8)
         delayL = FloatArray(lookaheadSamples)
@@ -269,6 +319,8 @@ class BrickwallLimiter : AudioEffect {
         releaseCoeff = kotlin.math.exp(
             -1.0 / ((releaseMs / 1000.0) * sampleRate)
         ).toFloat()
+        reduction.prepare(sampleRate)
+        outputLevel.prepare(sampleRate)
     }
 
     override fun process(frame: AudioFrame) {
@@ -285,9 +337,11 @@ class BrickwallLimiter : AudioEffect {
         val target = if (peak > ceiling) ceiling / peak else 1f
 
         gain = if (target < gain) target else target + releaseCoeff * (gain - target)
+        reduction.update(1f - gain)
 
         frame.l = (delayedL * gain).coerceIn(-ceiling, ceiling)
         frame.r = (delayedR * gain).coerceIn(-ceiling, ceiling)
+        outputLevel.update(max(abs(frame.l), abs(frame.r)))
     }
 
     override fun reset() {
@@ -295,6 +349,8 @@ class BrickwallLimiter : AudioEffect {
         delayR.fill(0f)
         writeIndex = 0
         gain = 1f
+        reduction.reset()
+        outputLevel.reset()
     }
 }
 
@@ -431,27 +487,30 @@ class Saturator : AudioEffect {
     @Volatile var character = Character.TAPE
     @Volatile var drive = 2f
     @Volatile var mix = 1f
+    @Volatile var stereoMode = StereoMode.STEREO
 
     override fun prepare(sampleRate: Int) = Unit
 
     override fun process(frame: AudioFrame) {
-        val dryL = frame.l
-        val dryR = frame.r
-        val wetL: Float
-        val wetR: Float
-        when (character) {
-            Character.TAPE -> {
-                wetL = Shapers.tape(dryL, drive); wetR = Shapers.tape(dryR, drive)
+        frame.inStereoMode(stereoMode) { f ->
+            val dryL = f.l
+            val dryR = f.r
+            val wetL: Float
+            val wetR: Float
+            when (character) {
+                Character.TAPE -> {
+                    wetL = Shapers.tape(dryL, drive); wetR = Shapers.tape(dryR, drive)
+                }
+                Character.TUBE -> {
+                    wetL = Shapers.tube(dryL, drive); wetR = Shapers.tube(dryR, drive)
+                }
+                Character.TRANSISTOR -> {
+                    wetL = Shapers.soft(dryL, drive); wetR = Shapers.soft(dryR, drive)
+                }
             }
-            Character.TUBE -> {
-                wetL = Shapers.tube(dryL, drive); wetR = Shapers.tube(dryR, drive)
-            }
-            Character.TRANSISTOR -> {
-                wetL = Shapers.soft(dryL, drive); wetR = Shapers.soft(dryR, drive)
-            }
+            f.l = dryL * (1f - mix) + wetL * mix
+            f.r = dryR * (1f - mix) + wetR * mix
         }
-        frame.l = dryL * (1f - mix) + wetL * mix
-        frame.r = dryR * (1f - mix) + wetR * mix
     }
 
     override fun reset() = Unit

@@ -64,8 +64,16 @@ object PlaybackManager {
     var mostPlayed by mutableStateOf<Map<String, Int>>(emptyMap())
     
     var minDuration by mutableStateOf(30)
+
+    /** Stored appearance choice: a theme id, or "system" to follow the device. */
     var themeMode by mutableStateOf("system")
     var isDarkTheme by mutableStateOf(false)
+
+    /** The resolved theme every colour token reads from. Set by the theme wrapper. */
+    var activeTheme by mutableStateOf(com.retro.grooveplayer.ui.theme.AppThemes.Daylight)
+
+    /** True when the user has not picked a per-theme accent override. */
+    var useThemeAccent by mutableStateOf(true)
 
     var accentColor by mutableStateOf("#a855f7")
     var eqPreset by mutableStateOf("Flat")
@@ -164,8 +172,9 @@ object PlaybackManager {
         storageManager = StorageManager(context)
 
         if (storageManager.needsThemeMigration()) {
-            storageManager.saveThemeMode("light")
+            storageManager.saveThemeMode("daylight")
             storageManager.saveAccentColor("#7C4DFF")
+            storageManager.saveUseThemeAccent(true)
             storageManager.markThemeMigrated()
         }
 
@@ -176,6 +185,7 @@ object PlaybackManager {
         mostPlayed = storageManager.getMostPlayed()
         minDuration = storageManager.getMinDuration()
         themeMode = storageManager.getThemeMode()
+        useThemeAccent = storageManager.getUseThemeAccent()
         songs = storageManager.getCachedSongs()
         accentColor = storageManager.getAccentColor()
         eqPreset = storageManager.getEqPreset()
@@ -193,6 +203,19 @@ object PlaybackManager {
         surroundEnabled = storageManager.getSurround()
         visualizerEnabled = storageManager.getVisualizerEnabled()
         spinningDiscEnabled = storageManager.getSpinningDiscEnabled()
+
+        // Restore the studio rack and keep it saved from here on. Without this every
+        // effect the user dialled in was lost when the process died.
+        userRackPresets = storageManager.getUserPresets()
+        perSongRack = storageManager.getPerSongRack()
+        songRacks = storageManager.getSongRacks().toMutableMap()
+        storageManager.getRackState().takeIf { it.isNotEmpty() }?.let {
+            com.retro.grooveplayer.dsp.RackSettings.fromMap(it)
+        }
+        com.retro.grooveplayer.dsp.RackSettings.onChanged = {
+            storageManager.saveRackState(com.retro.grooveplayer.dsp.RackSettings.toMap())
+            if (perSongRack) currentSong?.let { song -> rememberRackForSong(song.id) }
+        }
 
         vocalProcessor = VocalProcessor()
         vocalMode = try {
@@ -241,6 +264,8 @@ object PlaybackManager {
                         PlaybackManager.startProgressTracker()
                     } else {
                         PlaybackManager.stopProgressTracker()
+                        // Pausing is the most likely moment before the app is closed.
+                        PlaybackManager.persistResume()
                     }
                 }
 
@@ -270,6 +295,10 @@ object PlaybackManager {
         }
 
         isInitialised = true
+
+        // Must run after the player exists.
+        restoreLastSession()
+        restoreStartTimer()
     }
 
     /** Consecutive failures, so a folder of dead files can't spin forever. */
@@ -701,11 +730,28 @@ object PlaybackManager {
     var exportError by mutableStateOf<String?>(null)
     var exportedLabel by mutableStateOf("")
 
+    /** The name and extension the finished file was actually saved under. */
+    var exportedName by mutableStateOf("")
+    var exportedExtension by mutableStateOf("m4a")
+
     private var exportJob: Job? = null
 
-    fun startExport(song: Song, preset: FxPreset) {
+    fun startExport(
+        song: Song,
+        preset: FxPreset,
+        outputName: String,
+        format: AudioExporter.Format = AudioExporter.Format.M4A,
+        bitrate: Int = 192_000,
+        startMs: Long = 0L,
+        endMs: Long = 0L
+    ) {
         if (exportJob?.isActive == true) return
         exportedLabel = preset.label
+        exportedName = AudioExporter.sanitiseName(
+            outputName,
+            AudioExporter.defaultName(song, preset.label)
+        )
+        exportedExtension = format.extension
         exportProgress = 0f
         exportJob = coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
@@ -713,11 +759,16 @@ object PlaybackManager {
                     context = context,
                     song = song,
                     presetLabel = preset.label,
+                    outputName = exportedName,
                     speed = fxSpeed,
                     semitones = fxPitch,
                     reverbPercent = fxReverb,
                     vocalMode = vocalMode,
-                    spatial = spatialAudio
+                    spatial = spatialAudio,
+                    format = format,
+                    bitrate = bitrate,
+                    startMs = startMs,
+                    endMs = endMs
                 ) { fraction -> exportProgress = fraction }
             }
             exportProgress = null
@@ -729,6 +780,106 @@ object PlaybackManager {
                 exportError = result.error ?: "Export failed."
             }
         }
+    }
+
+    // --- User rack presets ------------------------------------------------------
+
+    var userRackPresets by mutableStateOf<List<com.retro.grooveplayer.data.RackPreset>>(emptyList())
+
+    /** Pushes the live rack's meter values into RackSettings for the UI to draw. */
+    // --- Resume and per-song rack ------------------------------------------------
+
+    var perSongRack by mutableStateOf(false)
+        private set
+
+    private var songRacks: MutableMap<String, Map<String, String>> = mutableMapOf()
+
+    fun changePerSongRack(enabled: Boolean) {
+        perSongRack = enabled
+        storageManager.savePerSongRack(enabled)
+        if (enabled) currentSong?.let { rememberRackForSong(it.id) }
+    }
+
+    private fun rememberRackForSong(songId: String) {
+        songRacks[songId] = com.retro.grooveplayer.dsp.RackSettings.toMap()
+        // Keep the map bounded; oldest entries fall off rather than growing forever.
+        if (songRacks.size > 200) {
+            val trimmed = songRacks.entries.drop(songRacks.size - 200).associate { it.key to it.value }
+            songRacks = trimmed.toMutableMap()
+        }
+        storageManager.saveSongRacks(songRacks)
+    }
+
+    private fun restoreRackForSong(songId: String) {
+        if (!perSongRack) return
+        songRacks[songId]?.let { com.retro.grooveplayer.dsp.RackSettings.fromMap(it) }
+    }
+
+    /**
+     * Restores the last track and position without starting playback, so reopening
+     * the app puts you back where you were rather than at the top of the library.
+     */
+    private fun restoreLastSession() {
+        val songId = storageManager.getResumeSongId() ?: return
+        val song = songs.firstOrNull { it.id == songId } ?: return
+        val savedPosition = storageManager.getResumePosition()
+
+        currentSong = song
+        duration = song.duration
+        position = savedPosition
+
+        try {
+            val mediaItem = MediaItem.Builder()
+                .setUri(Uri.parse(song.uri))
+                .setMediaId(song.id)
+                .build()
+            exoPlayer.setMediaItem(mediaItem)
+            exoPlayer.prepare()
+            exoPlayer.seekTo(savedPosition)
+            // Deliberately not calling play(): restoring should never make noise.
+            exoPlayer.playWhenReady = false
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        buildQueue(songs, song.id)
+        restoreRackForSong(song.id)
+    }
+
+    private fun persistResume() {
+        try {
+            storageManager.saveResume(currentSong?.id, exoPlayer.currentPosition)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun publishRackMeters() {
+        if (!isInitialised) return
+        try {
+            vocalProcessor.publishMeters()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun saveRackPreset(name: String) {
+        val preset = com.retro.grooveplayer.data.RackPreset(
+            id = "rp_" + System.currentTimeMillis(),
+            name = name,
+            settings = com.retro.grooveplayer.dsp.RackSettings.toMap()
+        )
+        userRackPresets = userRackPresets + preset
+        storageManager.saveUserPresets(userRackPresets)
+    }
+
+    fun loadRackPreset(preset: com.retro.grooveplayer.data.RackPreset) {
+        com.retro.grooveplayer.dsp.RackSettings.fromMap(preset.settings)
+    }
+
+    fun deleteRackPreset(id: String) {
+        userRackPresets = userRackPresets.filter { it.id != id }
+        storageManager.saveUserPresets(userRackPresets)
     }
 
     fun changeSpatialAudio(enabled: Boolean) {
@@ -767,6 +918,9 @@ object PlaybackManager {
         currentSong = song
         duration = song.duration
         position = 0L
+        // Each track can carry its own chain when per-song memory is on.
+        restoreRackForSong(song.id)
+        storageManager.saveResume(song.id, 0L)
 
         val mediaMetadata = androidx.media3.common.MediaMetadata.Builder()
             .setTitle(song.name)
@@ -1017,7 +1171,16 @@ object PlaybackManager {
 
     fun changeAccentColor(color: String) {
         accentColor = color
+        // Choosing a swatch overrides the theme's own accent until a theme is picked.
+        useThemeAccent = false
         storageManager.saveAccentColor(color)
+        storageManager.saveUseThemeAccent(false)
+    }
+
+    /** Reverts to whatever accent the active theme ships with. */
+    fun useThemeDefaultAccent() {
+        useThemeAccent = true
+        storageManager.saveUseThemeAccent(true)
     }
 
     fun clearLibrary() {
@@ -1089,47 +1252,109 @@ object PlaybackManager {
         isSleepTimerEndOfSong = false
     }
 
-    fun startStartTimer(minutes: Int) {
+    /** True when the system will let us schedule an exact alarm. */
+    val canScheduleExactAlarms: Boolean
+        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                (context.getSystemService(Context.ALARM_SERVICE) as AlarmManager)
+                    .canScheduleExactAlarms()
+            } catch (e: Exception) {
+                false
+            }
+        } else {
+            true
+        }
+
+    /** Set when the last timer had to fall back to an inexact alarm. */
+    var startTimerIsApproximate by mutableStateOf(false)
+        private set
+
+    /**
+     * Schedules playback to begin later.
+     *
+     * @return false if nothing could be scheduled at all, so the caller can tell the
+     *         user rather than showing a countdown for an alarm that will never fire.
+     */
+    fun startStartTimer(minutes: Int): Boolean {
         clearStartTimer()
         val durationMs = minutes * 60 * 1000L
-        startTimerEndTime = System.currentTimeMillis() + durationMs
+        val triggerTime = System.currentTimeMillis() + durationMs
+        startTimerEndTime = triggerTime
         startTimerLabel = formatTimerLabel(minutes)
+        storageManager.saveStartTimer(triggerTime)
 
-        // Schedule exact alarm to trigger even when locked/asleep
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, TimerReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(
             context,
-            1001,
-            intent,
+            START_TIMER_REQUEST,
+            Intent(context, TimerReceiver::class.java).setAction(TimerReceiver.ACTION_START_MUSIC),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val triggerTime = System.currentTimeMillis() + durationMs
+        var scheduled = false
+        startTimerIsApproximate = false
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerTime,
+            if (canScheduleExactAlarms) {
+                // setAlarmClock is the strongest guarantee available: it survives Doze
+                // and temporarily allowlists the app, which is what lets the receiver
+                // start a media foreground service on Android 12+.
+                val showIntent = PendingIntent.getActivity(
+                    context,
+                    START_TIMER_REQUEST + 1,
+                    Intent(context, com.retro.grooveplayer.MainActivity::class.java),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                alarmManager.setAlarmClock(
+                    AlarmManager.AlarmClockInfo(triggerTime, showIntent),
                     pendingIntent
                 )
+                scheduled = true
             } else {
-                alarmManager.setExact(
+                // Exact alarms are denied by default on Android 13+. Rather than fail
+                // silently - which is what used to happen - fall back to an inexact
+                // alarm so the music still starts, just not to the second.
+                alarmManager.setAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP,
                     triggerTime,
                     pendingIntent
                 )
+                scheduled = true
+                startTimerIsApproximate = true
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            try {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+                scheduled = true
+                startTimerIsApproximate = true
+            } catch (inner: Exception) {
+                inner.printStackTrace()
+            }
         }
 
+        if (!scheduled) {
+            clearStartTimer()
+            return false
+        }
+
+        startCountdownTicker()
+        return true
+    }
+
+    /**
+     * Drives the on-screen countdown only.
+     *
+     * This deliberately does not touch the alarm. The old version called
+     * clearStartTimer() when it reached zero, which cancelled the very alarm it was
+     * counting down to.
+     */
+    private fun startCountdownTicker() {
+        startTimerJob?.cancel()
         startTimerJob = coroutineScope.launch {
             while (true) {
                 val remaining = (startTimerEndTime ?: 0L) - System.currentTimeMillis()
                 if (remaining <= 0) {
-                    // Handled by AlarmManager broadcast receiver
-                    clearStartTimer()
+                    startTimerCountdown = "Starting..."
                     break
                 }
                 startTimerCountdown = formatCountdown(remaining)
@@ -1138,23 +1363,54 @@ object PlaybackManager {
         }
     }
 
+    /** Re-attaches the countdown to a timer that outlived the process. */
+    private fun restoreStartTimer() {
+        val saved = storageManager.getStartTimer()
+        if (saved <= 0L) return
+        if (saved <= System.currentTimeMillis()) {
+            storageManager.saveStartTimer(0L)
+            return
+        }
+        startTimerEndTime = saved
+        val minutes = ((saved - System.currentTimeMillis()) / 60000L).toInt().coerceAtLeast(1)
+        startTimerLabel = formatTimerLabel(minutes)
+        startCountdownTicker()
+    }
+
     fun clearStartTimer() {
         startTimerJob?.cancel()
         startTimerJob = null
         startTimerEndTime = null
         startTimerLabel = ""
         startTimerCountdown = ""
+        startTimerIsApproximate = false
+        if (isInitialised) storageManager.saveStartTimer(0L)
 
         try {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val intent = Intent(context, TimerReceiver::class.java)
             val pendingIntent = PendingIntent.getBroadcast(
                 context,
-                1001,
-                intent,
+                START_TIMER_REQUEST,
+                Intent(context, TimerReceiver::class.java).setAction(TimerReceiver.ACTION_START_MUSIC),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             alarmManager.cancel(pendingIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private const val START_TIMER_REQUEST = 1001
+
+    /** Opens the system screen where the user can allow exact alarms. */
+    fun requestExactAlarmPermission(activityContext: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        try {
+            activityContext.startActivity(
+                Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                    .setData(android.net.Uri.parse("package:${context.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -1390,9 +1646,12 @@ object PlaybackManager {
     private fun startProgressTracker() {
         progressJob?.cancel()
         progressJob = coroutineScope.launch {
+            var tick = 0
             while (true) {
                 position = exoPlayer.currentPosition
                 applyCrossfadeGain()
+                // Persist the resume point every few seconds rather than every tick.
+                if (++tick % 20 == 0) persistResume()
                 delay(250)
             }
         }
@@ -1459,5 +1718,7 @@ object PlaybackManager {
     fun changeThemeMode(mode: String) {
         themeMode = mode
         storageManager.saveThemeMode(mode)
+        // A newly chosen theme brings its own accent with it.
+        useThemeDefaultAccent()
     }
 }

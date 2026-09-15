@@ -29,8 +29,18 @@ object AudioExporter {
 
     data class Progress(val fraction: Float, val done: Boolean, val outputUri: Uri?, val error: String?)
 
+    /**
+     * Output container.
+     *
+     * MP3 is deliberately absent: Android ships an MP3 decoder but no encoder, so it
+     * would need a bundled native library like LAME.
+     */
+    enum class Format(val label: String, val extension: String, val mimeType: String) {
+        M4A("M4A / AAC", "m4a", "audio/mp4"),
+        WAV("WAV (lossless)", "wav", "audio/wav")
+    }
+
     private const val TIMEOUT_US = 10_000L
-    private const val OUTPUT_BITRATE = 192_000
 
     /**
      * @param speed playback rate multiplier; values below 1 slow the track down.
@@ -40,11 +50,17 @@ object AudioExporter {
         context: Context,
         song: Song,
         presetLabel: String,
+        outputName: String,
         speed: Float,
         semitones: Int,
         reverbPercent: Int,
         vocalMode: VocalProcessor.Mode,
         spatial: Boolean,
+        format: Format = Format.M4A,
+        bitrate: Int = 192_000,
+        /** Clip bounds in milliseconds. endMs <= 0 means render to the end. */
+        startMs: Long = 0L,
+        endMs: Long = 0L,
         onProgress: (Float) -> Unit
     ): Progress {
         var extractor: MediaExtractor? = null
@@ -78,15 +94,38 @@ object AudioExporter {
                 start()
             }
 
+            // Clip bounds. Seeking to the previous sync frame keeps the decoder happy;
+            // anything decoded before the requested start is discarded downstream.
+            val startUs = (startMs * 1000L).coerceIn(0L, durationUs)
+            val endUs = if (endMs > 0L) (endMs * 1000L).coerceIn(startUs, durationUs) else durationUs
+            if (startUs > 0L) {
+                extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            }
+            val renderUs = (endUs - startUs).coerceAtLeast(1L)
+
             // Resampling by this ratio changes speed and pitch together, which is
             // exactly what "slowed" and "nightcore" mean.
             val pitchFactor = Math.pow(2.0, semitones / 12.0).toFloat()
             val rate = (speed * pitchFactor).coerceIn(0.5f, 2.0f)
 
+            val dsp = ExportDsp(sampleRate, reverbPercent, vocalMode, spatial, rate)
+
+            // WAV skips the encoder entirely: PCM is written straight out.
+            if (format == Format.WAV) {
+                tempFile = File.createTempFile("retromuse_export", ".wav", context.cacheDir)
+                val error = renderWav(
+                    extractor, decoder, channelCount, sampleRate, dsp,
+                    startUs, endUs, renderUs, tempFile, onProgress
+                )
+                if (error != null) return Progress(0f, true, null, error)
+                val uri = publish(context, tempFile, song, outputName, presetLabel, format)
+                return Progress(1f, true, uri, null)
+            }
+
             val outFormat = MediaFormat.createAudioFormat(
                 MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 2
             ).apply {
-                setInteger(MediaFormat.KEY_BIT_RATE, OUTPUT_BITRATE)
+                setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
                 setInteger(
                     MediaFormat.KEY_AAC_PROFILE,
                     android.media.MediaCodecInfo.CodecProfileLevel.AACObjectLC
@@ -101,13 +140,13 @@ object AudioExporter {
             tempFile = File.createTempFile("retromuse_export", ".m4a", context.cacheDir)
             muxer = MediaMuxer(tempFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
-            val dsp = ExportDsp(sampleRate, reverbPercent, vocalMode, spatial, rate)
             val result = runPipeline(
-                extractor, decoder, encoder, muxer, channelCount, dsp, durationUs, onProgress
+                extractor, decoder, encoder, muxer, channelCount, dsp,
+                startUs, endUs, renderUs, onProgress
             )
             if (result != null) return Progress(0f, true, null, result)
 
-            val uri = publish(context, tempFile, song, presetLabel)
+            val uri = publish(context, tempFile, song, outputName, presetLabel, format)
             return Progress(1f, true, uri, null)
         } catch (e: Exception) {
             e.printStackTrace()
@@ -128,7 +167,9 @@ object AudioExporter {
         muxer: MediaMuxer,
         channelCount: Int,
         dsp: ExportDsp,
-        durationUs: Long,
+        startUs: Long,
+        endUs: Long,
+        renderUs: Long,
         onProgress: (Float) -> Unit
     ): String? {
         val decoderInfo = MediaCodec.BufferInfo()
@@ -150,7 +191,8 @@ object AudioExporter {
                 if (inIndex >= 0) {
                     val buffer = decoder.getInputBuffer(inIndex)!!
                     val size = extractor.readSampleData(buffer, 0)
-                    if (size < 0) {
+                    // Stop feeding once past the clip's end point.
+                    if (size < 0 || extractor.sampleTime > endUs) {
                         decoder.queueInputBuffer(
                             inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM
                         )
@@ -166,14 +208,18 @@ object AudioExporter {
             if (!sawDecodeEOS) {
                 val outIndex = decoder.dequeueOutputBuffer(decoderInfo, TIMEOUT_US)
                 if (outIndex >= 0) {
-                    if (decoderInfo.size > 0) {
+                    // Frames before the clip start are decoded (the seek lands on a
+                    // sync frame) but discarded, so the clip begins exactly on time.
+                    val inClip = decoderInfo.presentationTimeUs >= startUs &&
+                        decoderInfo.presentationTimeUs <= endUs
+                    if (decoderInfo.size > 0 && inClip) {
                         val buffer = decoder.getOutputBuffer(outIndex)!!
                         buffer.position(decoderInfo.offset)
                         buffer.limit(decoderInfo.offset + decoderInfo.size)
                         dsp.process(buffer, channelCount, pending)
                         onProgress(
-                            (decoderInfo.presentationTimeUs.toFloat() /
-                                durationUs.coerceAtLeast(1)).coerceIn(0f, 0.99f)
+                            ((decoderInfo.presentationTimeUs - startUs).toFloat() /
+                                renderUs.coerceAtLeast(1)).coerceIn(0f, 0.99f)
                         )
                     }
                     decoder.releaseOutputBuffer(outIndex, false)
@@ -241,12 +287,141 @@ object AudioExporter {
         return null
     }
 
+    /**
+     * WAV path: decode, process, and write PCM straight to a RIFF file. No encoder is
+     * involved, which is what makes it lossless and what makes it big.
+     */
+    private fun renderWav(
+        extractor: MediaExtractor,
+        decoder: MediaCodec,
+        channelCount: Int,
+        sampleRate: Int,
+        dsp: ExportDsp,
+        startUs: Long,
+        endUs: Long,
+        renderUs: Long,
+        target: File,
+        onProgress: (Float) -> Unit
+    ): String? {
+        val info = MediaCodec.BufferInfo()
+        val pending = ArrayList<Short>(8192)
+        var sawInputEOS = false
+        var sawDecodeEOS = false
+        var totalSamples = 0L
+
+        java.io.RandomAccessFile(target, "rw").use { out ->
+            // Placeholder header; sizes are patched in once the length is known.
+            out.write(ByteArray(44))
+
+            while (!sawDecodeEOS) {
+                if (!sawInputEOS) {
+                    val inIndex = decoder.dequeueInputBuffer(TIMEOUT_US)
+                    if (inIndex >= 0) {
+                        val buffer = decoder.getInputBuffer(inIndex)!!
+                        val size = extractor.readSampleData(buffer, 0)
+                        if (size < 0 || extractor.sampleTime > endUs) {
+                            decoder.queueInputBuffer(
+                                inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                            )
+                            sawInputEOS = true
+                        } else {
+                            decoder.queueInputBuffer(inIndex, 0, size, extractor.sampleTime, 0)
+                            extractor.advance()
+                        }
+                    }
+                }
+
+                val outIndex = decoder.dequeueOutputBuffer(info, TIMEOUT_US)
+                if (outIndex >= 0) {
+                    val inClip = info.presentationTimeUs >= startUs && info.presentationTimeUs <= endUs
+                    if (info.size > 0 && inClip) {
+                        val buffer = decoder.getOutputBuffer(outIndex)!!
+                        buffer.position(info.offset)
+                        buffer.limit(info.offset + info.size)
+                        dsp.process(buffer, channelCount, pending)
+
+                        if (pending.isNotEmpty()) {
+                            val bytes = ByteArray(pending.size * 2)
+                            for (i in pending.indices) {
+                                val v = pending[i].toInt()
+                                bytes[i * 2] = (v and 0xFF).toByte()
+                                bytes[i * 2 + 1] = ((v shr 8) and 0xFF).toByte()
+                            }
+                            out.write(bytes)
+                            totalSamples += pending.size
+                            pending.clear()
+                        }
+
+                        onProgress(
+                            ((info.presentationTimeUs - startUs).toFloat() /
+                                renderUs.coerceAtLeast(1)).coerceIn(0f, 0.99f)
+                        )
+                    }
+                    decoder.releaseOutputBuffer(outIndex, false)
+                    if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                        sawDecodeEOS = true
+                    }
+                }
+            }
+
+            if (totalSamples == 0L) return "Nothing was rendered - the clip may be empty."
+
+            val dataBytes = (totalSamples * 2).toInt()
+            out.seek(0)
+            out.write(wavHeader(dataBytes, sampleRate, 2))
+        }
+        return null
+    }
+
+    /** Standard 44-byte RIFF/WAVE header for 16-bit PCM. */
+    private fun wavHeader(dataBytes: Int, sampleRate: Int, channels: Int): ByteArray {
+        val byteRate = sampleRate * channels * 2
+        val buffer = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        buffer.put("RIFF".toByteArray())
+        buffer.putInt(36 + dataBytes)
+        buffer.put("WAVE".toByteArray())
+        buffer.put("fmt ".toByteArray())
+        buffer.putInt(16)               // PCM chunk size
+        buffer.putShort(1)              // format = PCM
+        buffer.putShort(channels.toShort())
+        buffer.putInt(sampleRate)
+        buffer.putInt(byteRate)
+        buffer.putShort((channels * 2).toShort())  // block align
+        buffer.putShort(16)             // bits per sample
+        buffer.put("data".toByteArray())
+        buffer.putInt(dataBytes)
+        return buffer.array()
+    }
+
+    /** The name offered in the export dialog before the user edits it. */
+    fun defaultName(song: Song, presetLabel: String): String =
+        if (presetLabel.isBlank() || presetLabel == "Original") song.name
+        else "${song.name} ($presetLabel)"
+
+    /**
+     * Strips characters that are illegal in a file name, and guarantees something
+     * usable if the user clears the field entirely.
+     */
+    fun sanitiseName(raw: String, fallback: String): String {
+        val cleaned = raw.trim()
+            .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+            .take(120)
+        return cleaned.ifBlank { fallback }
+    }
+
     /** Writes the finished file into the user's Music folder via MediaStore. */
-    private fun publish(context: Context, source: File, song: Song, presetLabel: String): Uri? {
-        val safeName = "${song.name} ($presetLabel)".replace(Regex("[\\\\/:*?\"<>|]"), "_")
+    private fun publish(
+        context: Context,
+        source: File,
+        song: Song,
+        outputName: String,
+        presetLabel: String,
+        format: Format
+    ): Uri? {
+        val safeName = sanitiseName(outputName, defaultName(song, presetLabel))
         val values = ContentValues().apply {
-            put(MediaStore.Audio.Media.DISPLAY_NAME, "$safeName.m4a")
-            put(MediaStore.Audio.Media.MIME_TYPE, "audio/mp4")
+            put(MediaStore.Audio.Media.DISPLAY_NAME, "$safeName.${format.extension}")
+            put(MediaStore.Audio.Media.MIME_TYPE, format.mimeType)
             put(MediaStore.Audio.Media.TITLE, safeName)
             put(MediaStore.Audio.Media.ARTIST, song.artist)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

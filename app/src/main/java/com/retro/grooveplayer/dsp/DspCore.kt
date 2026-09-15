@@ -282,6 +282,87 @@ object GainComputer {
     }
 }
 
+/** In-place iterative radix-2 Cooley-Tukey FFT, shared by convolution and analysis. */
+object Fft {
+    fun transform(re: FloatArray, im: FloatArray, inverse: Boolean = false) {
+        val n = re.size
+        var j = 0
+        for (i in 1 until n) {
+            var bit = n shr 1
+            while (j and bit != 0) {
+                j = j xor bit
+                bit = bit shr 1
+            }
+            j = j or bit
+            if (i < j) {
+                val tr = re[i]; re[i] = re[j]; re[j] = tr
+                val ti = im[i]; im[i] = im[j]; im[j] = ti
+            }
+        }
+
+        var len = 2
+        while (len <= n) {
+            val ang = (if (inverse) 2.0 else -2.0) * PI / len
+            val wRe = cos(ang).toFloat()
+            val wIm = sin(ang).toFloat()
+            var i = 0
+            while (i < n) {
+                var curRe = 1f
+                var curIm = 0f
+                val half = len / 2
+                for (k in 0 until half) {
+                    val uRe = re[i + k]
+                    val uIm = im[i + k]
+                    val vRe = re[i + k + half] * curRe - im[i + k + half] * curIm
+                    val vIm = re[i + k + half] * curIm + im[i + k + half] * curRe
+                    re[i + k] = uRe + vRe
+                    im[i + k] = uIm + vIm
+                    re[i + k + half] = uRe - vRe
+                    im[i + k + half] = uIm - vIm
+                    val nextRe = curRe * wRe - curIm * wIm
+                    curIm = curRe * wIm + curIm * wRe
+                    curRe = nextRe
+                }
+                i += len
+            }
+            len = len shl 1
+        }
+
+        if (inverse) {
+            val scale = 1f / n
+            for (i in 0 until n) {
+                re[i] *= scale
+                im[i] *= scale
+            }
+        }
+    }
+}
+
+/**
+ * Level meter feeding the UI. Written on the audio thread, read on the main thread;
+ * plain floats are fine because a torn read just shows a slightly stale bar.
+ */
+class Meter {
+    @Volatile var peak = 0f
+        private set
+
+    private var decay = 0.9995f
+
+    fun prepare(sampleRate: Int) {
+        // Roughly a 300 ms fall time, so bars are readable rather than flickering.
+        decay = exp(-1.0 / (0.3 * sampleRate)).toFloat()
+    }
+
+    fun update(value: Float) {
+        val v = abs(value)
+        peak = if (v > peak) v else peak * decay
+    }
+
+    fun reset() {
+        peak = 0f
+    }
+}
+
 /** Shared non-linear shapers. */
 object Shapers {
     /** Smooth symmetric soft clip: odd harmonics, transistor-like. */

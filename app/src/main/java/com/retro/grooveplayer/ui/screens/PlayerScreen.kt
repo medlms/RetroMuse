@@ -48,18 +48,34 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
+/**
+ * Reports what actually got scheduled.
+ *
+ * The start timer previously showed a countdown regardless, so an alarm the system
+ * refused to register looked identical to one that would fire.
+ */
+private fun announceStartTimer(context: android.content.Context, scheduled: Boolean) {
+    val message = when {
+        !scheduled -> "Couldn't schedule the timer. Check the app's alarm permission."
+        PlaybackManager.startTimerIsApproximate ->
+            "Timer set. Exact alarms are off for this app, so it may start a few minutes late - " +
+                "allow \"Alarms & reminders\" in Android settings for precise timing."
+        else -> "Timer set for ${PlaybackManager.startTimerLabel}."
+    }
+    android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+}
+
 /** Hands the rendered file to the system share sheet. */
 private fun shareAudio(
     context: android.content.Context,
     uri: android.net.Uri,
-    songName: String,
-    presetLabel: String
+    fileName: String
 ) {
     try {
         val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
             type = "audio/*"
             putExtra(android.content.Intent.EXTRA_STREAM, uri)
-            putExtra(android.content.Intent.EXTRA_TITLE, "$songName ($presetLabel)")
+            putExtra(android.content.Intent.EXTRA_TITLE, fileName)
             addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(android.content.Intent.createChooser(intent, "Share audio"))
@@ -240,6 +256,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 ) {
                     com.retro.grooveplayer.ui.components.ArtworkImage(
                         artworkUri = currentSong.albumArtUri,
+                        songUri = currentSong.uri,
                         songColorHex = currentSong.color,
                         modifier = Modifier.fillMaxSize(),
                         iconSizeSp = 24
@@ -279,21 +296,19 @@ fun PlayerScreen(onBackClick: () -> Unit) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(if (PlaybackManager.visualizerEnabled) 44.dp else 12.dp)
+                    .height(44.dp)
                     .padding(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.Bottom
             ) {
-                if (PlaybackManager.visualizerEnabled) {
-                    vizHeights.forEachIndexed { i, h ->
-                        Box(
-                            modifier = Modifier
-                                .width(5.dp)
-                                .height(h.dp)
-                                .clip(RoundedCornerShape(3.dp))
-                                .background(accentColor.copy(alpha = 0.55f + (i % 3) * 0.15f))
-                        )
-                    }
+                vizHeights.forEachIndexed { i, h ->
+                    Box(
+                        modifier = Modifier
+                            .width(5.dp)
+                            .height(h.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(accentColor.copy(alpha = 0.55f + (i % 3) * 0.15f))
+                    )
                 }
             }
 
@@ -870,7 +885,37 @@ fun PlayerScreen(onBackClick: () -> Unit) {
         } else {
             // Start grid options
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                val startMinutes = listOf(5, 10, 15, 20, 30, 45, 60, 90, 120)
+                // Android 13+ denies exact alarms by default. Say so up front instead
+                // of letting the timer quietly never fire.
+                if (!PlaybackManager.canScheduleExactAlarms) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(WarningColor.copy(alpha = 0.15f))
+                            .clickable { PlaybackManager.requestExactAlarmPermission(context) }
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Exact alarms are off",
+                                color = TextPrimaryColor,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Android may delay the start by several minutes. Tap to allow precise timing.",
+                                color = TextMutedColor,
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp
+                            )
+                        }
+                        Text("›", color = TextMutedColor, fontSize = 20.sp)
+                    }
+                }
+
+                val startMinutes = listOf(5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 480)
                 val chunked = startMinutes.chunked(3)
                 chunked.forEach { row ->
                     Row(
@@ -885,7 +930,7 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                                     .background(BgCard2Color)
                                     .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
                                     .clickable {
-                                        PlaybackManager.startStartTimer(mins)
+                                        announceStartTimer(context, PlaybackManager.startStartTimer(mins))
                                         showTimer = false
                                     }
                                     .padding(vertical = 14.dp),
@@ -919,7 +964,10 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                 )
                 Button(
                     onClick = {
-                        PlaybackManager.startStartTimer(customStartMins)
+                        announceStartTimer(
+                            context,
+                            PlaybackManager.startStartTimer(customStartMins)
+                        )
                         showTimer = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = SuccessColor),
@@ -1122,7 +1170,13 @@ fun PlayerScreen(onBackClick: () -> Unit) {
     LaunchedEffect(PlaybackManager.exportedUri) {
         PlaybackManager.exportedUri?.let { uri ->
             showPresets = false
-            shareAudio(context, uri, currentSong.name, PlaybackManager.exportedLabel)
+            val savedAs = "${PlaybackManager.exportedName}.${PlaybackManager.exportedExtension}"
+            android.widget.Toast.makeText(
+                context,
+                "Saved as $savedAs",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            shareAudio(context, uri, savedAs)
             PlaybackManager.exportedUri = null
         }
     }
@@ -1142,6 +1196,12 @@ fun PlayerScreen(onBackClick: () -> Unit) {
             .firstOrNull { it.id == PlaybackManager.activePreset }
             ?: PlaybackManager.FX_PRESETS.first()
 
+        // Prefilled with the song plus preset, but the user names their own edit.
+        val suggestedName = remember(currentSong, preset) {
+            com.retro.grooveplayer.playback.AudioExporter.defaultName(currentSong, preset.label)
+        }
+        var exportName by remember(suggestedName) { mutableStateOf(suggestedName) }
+
         Text(
             text = "Render \"${currentSong.name}\" with the current effects into a new audio file you can share.",
             color = TextSecondaryColor,
@@ -1149,6 +1209,144 @@ fun PlayerScreen(onBackClick: () -> Unit) {
             lineHeight = 19.sp
         )
         Spacer(Modifier.height(16.dp))
+
+        OutlinedTextField(
+            value = exportName,
+            onValueChange = { exportName = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("File name", color = TextMutedColor) },
+            singleLine = true,
+            trailingIcon = {
+                if (exportName != suggestedName) {
+                    Text(
+                        text = "Reset",
+                        color = accentColor,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clickable { exportName = suggestedName }
+                            .padding(end = 12.dp)
+                    )
+                }
+            },
+            supportingText = {
+                Text(
+                    text = "Saves as ${exportName.trim().ifBlank { suggestedName }}.m4a",
+                    color = TextMutedColor,
+                    fontSize = 11.sp
+                )
+            },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = TextPrimaryColor,
+                unfocusedTextColor = TextPrimaryColor,
+                focusedBorderColor = accentColor,
+                unfocusedBorderColor = BorderColor,
+                cursorColor = accentColor
+            ),
+            shape = RoundedCornerShape(14.dp)
+        )
+
+        Spacer(Modifier.height(14.dp))
+
+        // Clip range. Most shared edits are 15-60 second excerpts, not whole tracks.
+        var clipEnabled by remember(currentSong) { mutableStateOf(false) }
+        var clipStart by remember(currentSong) { mutableStateOf(0f) }
+        var clipEnd by remember(currentSong) {
+            mutableStateOf(duration.coerceAtLeast(1L).toFloat())
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Export a clip",
+                    color = TextPrimaryColor,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = if (clipEnabled) {
+                        "${formatTime(clipStart.toLong())} to ${formatTime(clipEnd.toLong())}"
+                    } else {
+                        "Whole track (${formatTime(duration)})"
+                    },
+                    color = TextMutedColor,
+                    fontSize = 12.sp
+                )
+            }
+            Switch(
+                checked = clipEnabled,
+                onCheckedChange = {
+                    clipEnabled = it
+                    if (it && clipEnd - clipStart > 60_000f) {
+                        // Default to a share-sized excerpt from where you are now.
+                        clipStart = position.toFloat()
+                        clipEnd = (clipStart + 30_000f).coerceAtMost(duration.toFloat())
+                    }
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = accentColor
+                )
+            )
+        }
+
+        if (clipEnabled && duration > 0) {
+            Text("Start", color = TextSecondaryColor, fontSize = 12.sp)
+            Slider(
+                value = clipStart.coerceIn(0f, duration.toFloat()),
+                onValueChange = { clipStart = it.coerceAtMost(clipEnd - 1000f) },
+                valueRange = 0f..duration.toFloat(),
+                colors = SliderDefaults.colors(
+                    thumbColor = accentColor,
+                    activeTrackColor = accentColor,
+                    inactiveTrackColor = BgSunkenColor
+                )
+            )
+            Text("End", color = TextSecondaryColor, fontSize = 12.sp)
+            Slider(
+                value = clipEnd.coerceIn(0f, duration.toFloat()),
+                onValueChange = { clipEnd = it.coerceAtLeast(clipStart + 1000f) },
+                valueRange = 0f..duration.toFloat(),
+                colors = SliderDefaults.colors(
+                    thumbColor = accentColor,
+                    activeTrackColor = accentColor,
+                    inactiveTrackColor = BgSunkenColor
+                )
+            )
+            Spacer(Modifier.height(4.dp))
+        }
+
+        // Output format. MP3 is absent because Android has no MP3 encoder.
+        var wavFormat by remember { mutableStateOf(false) }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(false to "M4A / AAC", true to "WAV lossless").forEach { (isWav, label) ->
+                val selected = wavFormat == isWav
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(99.dp))
+                        .background(if (selected) accentColor else BgSunkenColor)
+                        .clickable { wavFormat = isWav }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        color = if (selected) Color.White else TextSecondaryColor,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
 
         Row(
             modifier = Modifier
@@ -1200,7 +1398,20 @@ fun PlayerScreen(onBackClick: () -> Unit) {
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(99.dp))
                     .background(accentColor)
-                    .clickable { PlaybackManager.startExport(currentSong, preset) }
+                    .clickable {
+                        PlaybackManager.startExport(
+                            song = currentSong,
+                            preset = preset,
+                            outputName = exportName,
+                            format = if (wavFormat) {
+                                com.retro.grooveplayer.playback.AudioExporter.Format.WAV
+                            } else {
+                                com.retro.grooveplayer.playback.AudioExporter.Format.M4A
+                            },
+                            startMs = if (clipEnabled) clipStart.toLong() else 0L,
+                            endMs = if (clipEnabled) clipEnd.toLong() else 0L
+                        )
+                    }
                     .padding(vertical = 15.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
@@ -1387,3 +1598,4 @@ fun RowScope.TabRowButton(
         }
     }
 }
+

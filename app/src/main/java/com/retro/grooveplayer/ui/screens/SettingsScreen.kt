@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.retro.grooveplayer.playback.PlaybackManager
 import com.retro.grooveplayer.dsp.RackSettings
+import com.retro.grooveplayer.ui.theme.ActiveTheme
+import com.retro.grooveplayer.ui.theme.AppThemes
 import com.retro.grooveplayer.ui.theme.BgColor
 import com.retro.grooveplayer.ui.theme.BgSunkenColor
 import com.retro.grooveplayer.ui.theme.BorderColor
@@ -47,9 +49,6 @@ fun SettingsScreen() {
     // constants, so nothing survived leaving the screen and nothing was applied.
     val gapless = PlaybackManager.gaplessEnabled
     val crossfade = PlaybackManager.crossfadeEnabled
-    val bassBoost = PlaybackManager.fxBass > 0
-    val surround = PlaybackManager.surroundEnabled
-    val visualizer = PlaybackManager.visualizerEnabled
 
     Column(
         modifier = Modifier
@@ -109,140 +108,112 @@ fun SettingsScreen() {
             }
         )
 
+        // Bass Boost, 3D Surround, Master Limiter, Playback Speed and Equalizer Preset
+        // used to live here as well. They duplicated controls that the Audio Effects
+        // sheet and the Studio Rack already own, so this screen keeps only the
+        // playback options that exist nowhere else.
+
         SettingRow(
-            icon = "🔊",
-            title = "Bass Boost",
-            subtitle = "Enhance low frequencies",
+            icon = "🎚",
+            title = "Per-song Studio Rack",
+            subtitle = "Remember effect settings separately for each track",
             rightContent = {
                 Switch(
-                    checked = bassBoost,
-                    onCheckedChange = { PlaybackManager.applyBassBoost(if (it) 80 else 0) },
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
+                    checked = PlaybackManager.perSongRack,
+                    onCheckedChange = { PlaybackManager.changePerSongRack(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = accentColor
+                    )
                 )
             }
-        )
-
-        SettingRow(
-            icon = "📻",
-            title = "3D Surround Sound",
-            subtitle = "Virtual spatial audio",
-            rightContent = {
-                Switch(
-                    checked = surround,
-                    onCheckedChange = { PlaybackManager.changeSurround(it) },
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
-                )
-            }
-        )
-
-        SettingRow(
-            icon = "🛡️",
-            title = "Master Limiter",
-            subtitle = "Prevent clipping in custom DSP effect rack",
-            rightContent = {
-                Switch(
-                    checked = RackSettings.limiterEnabled,
-                    onCheckedChange = {
-                        RackSettings.limiterEnabled = it
-                        RackSettings.touch()
-                    },
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
-                )
-            }
-        )
-
-        SettingRow(
-            icon = "⚡",
-            title = "Playback Speed",
-            subtitle = "Current: ${PlaybackManager.speed}x",
-            rightContent = {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(vertical = 4.dp)
-                ) {
-                    listOf(0.75f, 1f, 1.25f, 1.5f, 2f).forEach { s ->
-                        val isSelected = PlaybackManager.speed == s
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(99.dp))
-                                .background(if (isSelected) accentColor else Color.Transparent)
-                                .border(1.dp, BorderColor, RoundedCornerShape(99.dp))
-                                .clickable {
-                                    PlaybackManager.speed = s
-                                    PlaybackManager.fxSpeed = s
-                                    PlaybackManager.updatePlaybackParameters()
-                                }
-                                .padding(horizontal = 10.dp, vertical = 4.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "${s}x",
-                                color = if (isSelected) Color.White else TextSecondaryColor,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-            }
-        )
-
-        SettingRow(
-            icon = "🎛️",
-            title = "Equalizer Preset",
-            subtitle = "Active: ${PlaybackManager.eqPreset}",
-            rightContent = null
         )
 
         // Section Interface
         SectionTitle(title = "Interface", accentColor = accentColor)
 
+        // Appearance: named themes, each carrying its own canvas and accent, rather
+        // than a bare light/dark switch.
         SettingRow(
             icon = "🎨",
-            title = "Theme Mode",
-            subtitle = "Active: ${PlaybackManager.themeMode.uppercase()}",
-            rightContent = {
+            title = "Appearance",
+            subtitle = "Theme: ${ActiveTheme.name}",
+            rightContent = null
+        )
+
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
+            val followSystem = PlaybackManager.themeMode == AppThemes.SYSTEM
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (followSystem) accentColor.copy(alpha = 0.14f) else BgSunkenColor)
+                    .clickable { PlaybackManager.changeThemeMode(AppThemes.SYSTEM) }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("📱", fontSize = 16.sp)
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Follow system",
+                        color = if (followSystem) accentColor else TextPrimaryColor,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Daylight by day, Midnight at night",
+                        color = TextMutedColor,
+                        fontSize = 12.sp
+                    )
+                }
+                if (followSystem) Text("✓", color = accentColor, fontSize = 16.sp)
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Two-column grid of theme swatches.
+            AppThemes.all.chunked(2).forEach { row ->
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(vertical = 4.dp)
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf("light" to "☀️ Light", "dark" to "🌙 Dark", "system" to "📱 System").forEach { (mode, label) ->
-                        val isSelected = PlaybackManager.themeMode == mode
-                        Box(
+                    row.forEach { theme ->
+                        val isSelected = PlaybackManager.themeMode == theme.id
+                        Row(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(99.dp))
-                                .background(if (isSelected) accentColor else Color.Transparent)
-                                .border(1.dp, BorderColor, RoundedCornerShape(99.dp))
-                                .clickable {
-                                    PlaybackManager.changeThemeMode(mode)
-                                }
-                                .padding(horizontal = 10.dp, vertical = 4.dp),
-                            contentAlignment = Alignment.Center
+                                .weight(1f)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(theme.elevated)
+                                .border(
+                                    width = if (isSelected) 2.dp else 1.dp,
+                                    color = if (isSelected) accentColor else BorderColor,
+                                    shape = RoundedCornerShape(14.dp)
+                                )
+                                .clickable { PlaybackManager.changeThemeMode(theme.id) }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // Preview dot in the theme's own accent.
+                            Box(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(theme.accent)
+                            )
+                            Spacer(Modifier.width(9.dp))
                             Text(
-                                text = label,
-                                color = if (isSelected) Color.White else TextSecondaryColor,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                                text = theme.name,
+                                color = theme.textPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                             )
                         }
                     }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
-        )
-
-        SettingRow(
-            icon = "✨",
-            title = "Visualizer",
-            subtitle = "Show audio bars while playing",
-            rightContent = {
-                Switch(
-                    checked = visualizer,
-                    onCheckedChange = { PlaybackManager.changeVisualizerEnabled(it) },
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
-                )
-            }
-        )
+        }
 
         SettingRow(
             icon = "🎨",
@@ -302,6 +273,47 @@ fun SettingsScreen() {
                     Text("›", color = TextMutedColor, fontSize = 22.sp)
                 }
             )
+        }
+
+        // Only shown when something has actually crashed, so it stays out of the way.
+        if (com.retro.grooveplayer.data.CrashLog.hasEntries(context)) {
+            SectionTitle(title = "Diagnostics", accentColor = accentColor)
+            Box(modifier = Modifier.clickable {
+                try {
+                    val report = com.retro.grooveplayer.data.CrashLog.read(context)
+                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(
+                        android.content.Intent.EXTRA_SUBJECT,
+                        "${context.getString(com.retro.grooveplayer.R.string.app_name)} crash log"
+                    )
+                        putExtra(android.content.Intent.EXTRA_TEXT, report)
+                    }
+                    context.startActivity(
+                        android.content.Intent.createChooser(intent, "Send crash log")
+                    )
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Couldn't open the log.", Toast.LENGTH_SHORT).show()
+                }
+            }) {
+                SettingRow(
+                    icon = "🐞",
+                    title = "Crash Log",
+                    subtitle = "A crash was recorded. Tap to review or send it.",
+                    rightContent = {
+                        Text(
+                            "Clear",
+                            color = DangerColor,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.clickable {
+                                com.retro.grooveplayer.data.CrashLog.clear(context)
+                                Toast.makeText(context, "Crash log cleared", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
+                )
+            }
         }
 
         // Storage & Library
@@ -389,8 +401,14 @@ fun SettingsScreen() {
 
         // About
         SectionTitle(title = "About", accentColor = accentColor)
-        SettingRow("🎵", "RetroMuse Music Player", "Version ${com.retro.grooveplayer.BuildConfig.VERSION_NAME} – Sideload & Edit Pro", null)
-        SettingRow("💜", "DSP Engine", "Custom C++ Real-time Effect Rack", null)
+        SettingRow(
+            "🎵",
+            androidx.compose.ui.res.stringResource(com.retro.grooveplayer.R.string.app_name),
+            "Version ${com.retro.grooveplayer.BuildConfig.VERSION_NAME}",
+            null
+        )
+        // The engine is Kotlin, not C++ - the previous wording claimed otherwise.
+        SettingRow("💜", "DSP Engine", "Real-time Kotlin effect rack", null)
     }
 }
 

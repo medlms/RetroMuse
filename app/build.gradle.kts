@@ -25,8 +25,8 @@ android {
         applicationId = "com.retro.retromuse"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.0.13"
+        versionCode = 16
+        versionName = "1.0.14"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -56,6 +56,16 @@ android {
     }
 
     buildTypes {
+        debug {
+            // The Play build is signed with the release key, so a debug APK cannot
+            // replace it. A distinct applicationId lets the dev build sit alongside it
+            // instead of forcing an uninstall that would wipe the user's library.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-dev"
+            // No app_name override: the launcher label matches the real product name.
+            // The Play build is still a separate package (com.retro.retromuse), so the
+            // two coexist despite the similar labels.
+        }
         release {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true

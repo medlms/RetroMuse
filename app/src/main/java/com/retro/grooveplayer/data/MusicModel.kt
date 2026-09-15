@@ -20,6 +20,13 @@ data class LyricLine(
     val text: String
 )
 
+/** A user-saved studio rack chain. */
+data class RackPreset(
+    val id: String,
+    val name: String,
+    val settings: Map<String, String>
+)
+
 data class Playlist(
     val id: String,
     val name: String,

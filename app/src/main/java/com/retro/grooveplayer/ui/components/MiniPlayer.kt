@@ -1,4 +1,4 @@
-package com.retro.grooveplayer.ui.components
+﻿package com.retro.grooveplayer.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -59,6 +59,7 @@ fun MiniPlayer(onMiniPlayerClick: () -> Unit) {
                 ) {
                     ArtworkImage(
                         artworkUri = song.albumArtUri,
+                        songUri = song.uri,
                         songColorHex = song.color,
                         modifier = Modifier.fillMaxSize(),
                         iconSizeSp = 18
@@ -157,3 +158,4 @@ fun MiniPlayer(onMiniPlayerClick: () -> Unit) {
         }
     }
 }
+

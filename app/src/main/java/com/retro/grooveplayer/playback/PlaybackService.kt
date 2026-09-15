@@ -77,7 +77,8 @@ class PlaybackService : MediaSessionService() {
             ACTION_TOGGLE -> PlaybackManager.togglePlay()
             ACTION_NEXT -> PlaybackManager.nextSong()
             ACTION_PREV -> PlaybackManager.prevSong()
-            "ACTION_AUTO_START" -> PlaybackManager.playFirstSong()
+            TimerReceiver.ACTION_START_MUSIC, "ACTION_AUTO_START" ->
+                PlaybackManager.playFirstSong()
         }
         return super.onStartCommand(intent, flags, startId)
     }
@@ -120,7 +121,7 @@ class PlaybackService : MediaSessionService() {
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(song?.name ?: "RetroMuse")
+            .setContentTitle(song?.name ?: getString(R.string.app_name))
             .setContentText(song?.artist ?: "Ready to play")
             .setSubText(song?.album)
             .setLargeIcon(artwork)

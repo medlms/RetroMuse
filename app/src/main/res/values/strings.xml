@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Launcher label. The Play Store title is set separately in Play Console; keep
-         the two aligned around the differentiating features, not the generic category. -->
-    <string name="app_name">RetroMuse</string>
-    <string name="store_title">RetroMuse: Vocal Remover &amp; Slowed Reverb</string>
+         the two aligned around the differentiating features, not the generic category.
+         The debug build overrides this via resValue in build.gradle.kts. -->
+    <string name="app_name" translatable="false">RetroMuse Music Player &amp; Editor</string>
+    <string name="store_title">RetroMuse Music Player &amp; Editor</string>
     <string name="store_short_description">Remove vocals, make slowed + reverb and 8D edits, and share them.</string>
 </resources>

@@ -92,7 +92,7 @@ class RetroMuseWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.widget_title, currentSong.name)
                 views.setTextViewText(R.id.widget_artist, currentSong.artist)
             } else {
-                views.setTextViewText(R.id.widget_title, "RetroMuse")
+                views.setTextViewText(R.id.widget_title, context.getString(R.string.app_name))
                 views.setTextViewText(R.id.widget_artist, "Select a song to start")
             }
 

@@ -167,6 +167,9 @@ class VocalProcessor : BaseAudioProcessor() {
         outputBuffer.flip()
     }
 
+    /** Exposes the live rack's meters to the UI. */
+    fun publishMeters() = rack.publishMeters()
+
     /** Feeds the visualiser when the buffer is being passed through unmodified. */
     private fun tapForLevels(buffer: ByteBuffer, isFloat: Boolean, isStereo: Boolean) {
         val step = if (isStereo) 2 else 1

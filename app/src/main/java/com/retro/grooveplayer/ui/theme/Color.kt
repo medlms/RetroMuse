@@ -46,23 +46,29 @@ val RetroPink = Color(0xFFD81B60)
 val RetroGold = Color(0xFFC77A00)
 
 // --- Dynamic tokens ----------------------------------------------------------
-val BgColor: Color @Composable get() = if (PlaybackManager.isDarkTheme) DarkBgColor else LightBgColor
-val BgElevatedColor: Color @Composable get() = if (PlaybackManager.isDarkTheme) DarkBgElevatedColor else LightBgElevatedColor
-val BgSunkenColor: Color @Composable get() = if (PlaybackManager.isDarkTheme) DarkBgSunkenColor else LightBgSunkenColor
-val BgCardColor: Color @Composable get() = if (PlaybackManager.isDarkTheme) DarkBgCardColor else LightBgCardColor
-val BgCard2Color: Color @Composable get() = if (PlaybackManager.isDarkTheme) DarkBgCard2Color else LightBgCard2Color
-val BgModalColor: Color @Composable get() = if (PlaybackManager.isDarkTheme) DarkBgModalColor else LightBgModalColor
-val BorderColor: Color @Composable get() = if (PlaybackManager.isDarkTheme) DarkBorderColor else LightBorderColor
-val TextPrimaryColor: Color @Composable get() = if (PlaybackManager.isDarkTheme) DarkTextPrimaryColor else LightTextPrimaryColor
-val TextSecondaryColor: Color @Composable get() = if (PlaybackManager.isDarkTheme) DarkTextSecondaryColor else LightTextSecondaryColor
-val TextMutedColor: Color @Composable get() = if (PlaybackManager.isDarkTheme) DarkTextMutedColor else LightTextMutedColor
+// Every token now reads from the active AppTheme, so adding a theme needs no changes
+// anywhere else in the UI.
 
-/** Shadow colour tuned per theme - dark mode gets no visible drop shadow. */
-val ShadowColor: Color @Composable get() = if (PlaybackManager.isDarkTheme) Color.Transparent else Color(0x14000000)
+val ActiveTheme: AppTheme
+    @Composable get() = PlaybackManager.activeTheme
+
+val BgColor: Color @Composable get() = ActiveTheme.background
+val BgElevatedColor: Color @Composable get() = ActiveTheme.elevated
+val BgSunkenColor: Color @Composable get() = ActiveTheme.sunken
+val BgCardColor: Color @Composable get() = ActiveTheme.card
+val BgCard2Color: Color @Composable get() = ActiveTheme.card2
+val BgModalColor: Color @Composable get() = ActiveTheme.modal
+val BorderColor: Color @Composable get() = ActiveTheme.border
+val TextPrimaryColor: Color @Composable get() = ActiveTheme.textPrimary
+val TextSecondaryColor: Color @Composable get() = ActiveTheme.textSecondary
+val TextMutedColor: Color @Composable get() = ActiveTheme.textMuted
+
+/** Shadow colour tuned per theme - dark themes get no visible drop shadow. */
+val ShadowColor: Color @Composable get() =
+    if (ActiveTheme.isDark) Color.Transparent else Color(0x14000000)
 
 /** Page background wash. Subtle enough to read as a flat surface. */
-val RetroNeonGradient: Brush @Composable get() = if (PlaybackManager.isDarkTheme) {
-    Brush.verticalGradient(colors = listOf(Color(0xFF16151B), Color(0xFF0E0D10)))
-} else {
-    Brush.verticalGradient(colors = listOf(Color(0xFFFFFFFF), Color(0xFFF7F5F2)))
+val RetroNeonGradient: Brush @Composable get() {
+    val theme = ActiveTheme
+    return Brush.verticalGradient(colors = listOf(theme.elevated, theme.background))
 }
